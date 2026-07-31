@@ -39,11 +39,13 @@ Schema-level invariants enforced (not in Python):
   that caused it.
 - At most one live bet per (race, guest): partial unique index
   `idx_bet_one_live_per_guest_race ON bet(race_number, guest_id) WHERE
-  superseded_by IS NULL`. This is the invariant `total_points_by_guest`
+  superseded_at IS NULL`. This is the invariant `total_points_by_guest`
   depends on — it sums every bet it's handed and cannot itself detect a
   duplicate.
 - `bet.client_bet_id` UNIQUE (the idempotency key) and foreign keys on
-  every reference, including `bet.superseded_by -> bet(id)`.
+  every reference except `superseded_at`, which is a plain nullable
+  timestamp with no FK — see "The supersede ordering resolution" below for
+  why.
 
 ## `schema_migrations` is owned by `db.py`, not by the migration file
 
@@ -94,6 +96,23 @@ Raises `DatabasePathNotConfiguredError` if `DATABASE_PATH` is unset or
 empty — added during plan review so a missing env var fails with a named
 exception instead of a bare `KeyError`.
 
+### Transactions
+
+```python
+def transaction() -> AbstractContextManager[sqlite3.Connection]
+```
+`@contextmanager`. Same pragmas as `get_connection()`. Commits on clean
+exit, rolls back on any exception raised inside the block, always closes.
+Generalizes the inline open/try/commit/except-rollback pattern that used
+to live only in `initialise_event` (now itself rewritten to use
+`transaction()`). Every write primitive below accepts an optional
+keyword-only `conn`: passing it makes the primitive use that connection
+and not commit (the `transaction()` block owns the commit/rollback);
+omitting it keeps the primitive's old standalone behaviour — open its own
+connection via `get_connection()` and commit immediately. This is how
+several writes are composed into one atomic unit, e.g.
+`place_or_replace_bet` below.
+
 ### Migration runner
 
 ```python
@@ -137,11 +156,11 @@ row for every (race, horse) pair, and sets `meta['total_races']` /
 def get_guests() -> list[GuestInfo]
 def get_logged_in_guest_ids() -> set[int]           # claimed_at IS NOT NULL
 def get_settled_results() -> dict[int, RaceResult]   # status = 'SETTLED' only
-def get_live_bets() -> list[Bet]                     # superseded_by IS NULL
+def get_live_bets() -> list[Bet]                     # superseded_at IS NULL
 ```
 Import `GuestInfo`, `Bet`, `RaceResult` directly from
 `app.services.scoring` — no local redefinition, no adapter. Every
-bet-reading function in the module filters `superseded_by IS NULL`.
+bet-reading function in the module filters `superseded_at IS NULL`.
 
 ### Primitives for Step 3
 
@@ -154,41 +173,80 @@ the state machine's job in Step 3):
 fetch_guest_by_id(guest_id) -> sqlite3.Row | None
 fetch_guest_by_username(username) -> sqlite3.Row | None
 fetch_guest_by_device_token(device_token) -> sqlite3.Row | None
-insert_guest(username, display_name, created_at) -> int
+insert_guest(username, display_name, created_at, *, conn=None) -> int
 get_horses() -> list[sqlite3.Row]
 fetch_race(race_number) -> sqlite3.Row | None
 get_race_entries(race_number) -> list[sqlite3.Row]
-insert_bet(race_number, guest_id, horse_number, client_bet_id, created_at) -> int
-mark_bet_superseded(bet_id, superseded_by) -> None
+insert_bet(race_number, guest_id, horse_number, client_bet_id, created_at, *, conn=None) -> int
+place_or_replace_bet(race_number, guest_id, horse_number, client_bet_id, created_at) -> BetWriteResult
 fetch_bet_by_client_bet_id(client_bet_id) -> sqlite3.Row | None
-append_audit_log(at, actor, action, payload_json) -> int
+append_audit_log(at, actor, action, payload_json, *, conn=None) -> int
 get_meta(key) -> str | None
-set_meta(key, value) -> None
+set_meta(key, value, *, conn=None) -> None
 ```
 
-## The supersede ordering gotcha for Step 3
+`insert_bet` is a low-level primitive with no supersede handling and no
+idempotency check — it exists for test setup and bulk seeding only.
+Guest-facing bet writes must go through `place_or_replace_bet` instead.
 
-The partial unique index on `bet` checks immediately per-statement, not at
-commit — so within one transaction you cannot have a replacement bet's
-`INSERT` land while the old bet's `superseded_by` is still `NULL` (uniqueness
-violation), and you cannot mark the old bet superseded by a not-yet-existing
-new bet's id (FK violation). There is no ordering of "insert new bet" /
-"mark old bet superseded" that satisfies both constraints in two statements.
+## The supersede ordering resolution: `superseded_at`, not `superseded_by`
 
-`mark_bet_superseded` itself is a raw primitive with no opinion on this —
-Step 3's `bets.py` is where the resolution needs to live. `test_db.py`
-demonstrates one working pattern (used only for test setup, not
-prescriptive for Step 3): supersede the old bet using the id of some
-*other* already-existing bet as a temporary valid target, insert the
-replacement, done. A cleaner real implementation likely wants something
-along those lines or a self-referencing placeholder — either way, Step 3
-needs to design the actual supersede operation with this ordering
-constraint in mind, not just call `insert_bet` then `mark_bet_superseded`
-in the obvious order.
+The original schema had `bet.superseded_by INTEGER REFERENCES bet(id)`.
+The partial unique index on `bet` is checked per-statement, not at
+commit, so within one transaction there was no ordering of "insert the
+replacement bet" / "mark the old bet superseded" that satisfied both the
+uniqueness index (which forbids the replacement's INSERT while the old
+bet is still live) and the FK on `superseded_by` (which forbids pointing
+the old bet at a not-yet-existing replacement id). `tests/test_db.py`
+worked around this by superseding a bet using the id of an unrelated bet
+in a different race as a temporary valid FK target — a hack that
+corrupted the meaning of test data and was never going to translate into
+a real `bets.py` operation.
+
+The column is now `bet.superseded_at TEXT`, a plain nullable timestamp
+with no FK and no pointer to any other row. This sidesteps the ordering
+problem entirely: `UPDATE bet SET superseded_at = ? WHERE race_number = ?
+AND guest_id = ? AND superseded_at IS NULL` turns the old live bet
+non-live *before* the replacement is inserted, satisfying the partial
+unique index with nothing left to satisfy on the FK side, because there
+is no FK. The replacement bet needs no pointer back to what it replaced —
+it's recoverable as that guest's next bet in the race, ordered by
+`created_at`.
+
+`db.py` now owns this as one atomic composite primitive:
+
+```python
+@dataclass(frozen=True)
+class BetWriteResult:
+    bet_id: int
+    replaced: bool
+
+
+def place_or_replace_bet(
+    race_number: int, guest_id: int, horse_number: int,
+    client_bet_id: str, created_at: str,
+) -> BetWriteResult
+```
+
+In a single `transaction()`: supersede any live bet for `(race_number,
+guest_id)` by setting its `superseded_at` to `created_at`, then insert
+the new bet via `insert_bet(..., conn=conn)`. `replaced` comes straight
+from the UPDATE's `cursor.rowcount` (0 or 1 — the partial unique index
+guarantees it can never exceed 1), so callers can tell "placed a first
+bet" from "changed an existing bet" without a second query. If the
+INSERT fails (e.g. a retried `client_bet_id` colliding with the
+now-superseded original row, which is still subject to the table-wide
+`client_bet_id` UNIQUE constraint), `transaction()` rolls back the
+UPDATE too — the original bet stays live, exactly as if the call had
+never happened. No validation beyond what the schema enforces — race
+status, horse-in-race, and idempotency checks are Step 3's `bets.py`'s
+job, same as `insert_bet` never checked those either. `bets.py` should
+call `place_or_replace_bet` directly rather than reassembling the
+UPDATE/INSERT itself.
 
 ## Test coverage summary
 
-77 tests passing total (23 new in `tests/test_db.py`, plus the 54 from
+83 tests passing total (29 in `tests/test_db.py`, plus the 54 from
 Step 1), run via `venv\Scripts\Activate.ps1` then `pytest` from the repo
 root. Uses a file-backed temp DB per test (`tmp_path`, `DATABASE_PATH` via
 `monkeypatch`), never `:memory:`, since WAL and file-existence behavior are
@@ -203,14 +261,18 @@ exception for missing/un-migrated/uninitialised, passes after
 from the raise — never creates the database file when it raises;
 `initialise_event` seeds the right row counts and raises on a second call;
 the one-open-race and one-live-bet partial indexes reject violations and
-the live-bet one permits a replacement once the old bet is marked
-superseded; duplicate `client_bet_id` and FK violations are rejected; the
-two new `race` `CHECK` constraints reject a `SETTLED` race with a `NULL`
-placing and a race with a repeated horse across positions;
-`get_live_bets()`/`get_settled_results()` respect their filters; and
+the live-bet one permits a replacement once `place_or_replace_bet`
+supersedes the old bet; duplicate `client_bet_id` and FK violations are
+rejected; the two new `race` `CHECK` constraints reject a `SETTLED` race
+with a `NULL` placing and a race with a repeated horse across positions;
+`get_live_bets()`/`get_settled_results()` respect their filters;
 `get_guests()` / `get_logged_in_guest_ids()` / `get_live_bets()` /
 `get_settled_results()` feed `build_leaderboard()` directly with no
-adapter, producing correct ranks and totals.
+adapter, producing correct ranks and totals; `place_or_replace_bet` called
+twice leaves exactly one live and one superseded bet, inserts-only when
+there's no existing bet, and rolls back its UPDATE when the INSERT fails
+on a duplicate `client_bet_id`; and `transaction()` rolls back fully on an
+exception and commits or rolls back multiple composed writes together.
 
 ## Carry-forward note for Step 3
 
@@ -220,7 +282,12 @@ land next. `races.py` will drive `race.status` transitions using
 path — likely a small set of new `db.py` primitives (`update_race_status`,
 `settle_race`, etc.) rather than raw `UPDATE race SET ...` scattered
 through the service, though `db.py` should stay opinion-free about *when*
-those transitions are valid; that logic belongs in `races.py`. `bets.py`
-must solve the supersede-ordering gotcha above as part of its "place or
-change a bet" operation, and should reuse `db.fetch_bet_by_client_bet_id`
-for the idempotency check before writing anything.
+those transitions are valid; that logic belongs in `races.py`. `bets.py`'s
+"place or change a bet" operation should call `db.place_or_replace_bet`
+directly (the supersede-ordering problem is already solved at the `db.py`
+layer — see "The supersede ordering resolution" above) and should reuse
+`db.fetch_bet_by_client_bet_id` for the idempotency pre-check, but treat
+the `IntegrityError` from a duplicate `client_bet_id` as the authoritative
+idempotency signal rather than relying on the pre-check alone (see the
+tracker's open questions for the TOCTOU note on this). `insert_bet` is a
+low-level primitive now — do not call it directly for guest-facing writes.

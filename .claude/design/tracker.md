@@ -8,8 +8,9 @@ Status against `@.claude/design/design-doc.md`, updated after each session.
       DB, no AWS. Username collisions and dense ranking settled here.
       Completed 2026-07-30. 54 tests passing. See
       `@.claude/implementation/001-pure-service-modules.md`.
-- [x] 2. `db.py` + `migrations/001_initial.sql`. Completed 2026-07-31. 23 new
-      tests (77 total passing). See
+- [x] 2. `db.py` + `migrations/001_initial.sql`. Completed 2026-07-31, amended
+      2026-07-31 (`superseded_at` + composable transactions). 29 tests in
+      `test_db.py` (83 total passing). See
       `@.claude/implementation/002-storage-layer.md`.
 - [ ] 3. `services/races.py` + `services/bets.py` with tests. The state machine is
       where correctness lives.
@@ -31,6 +32,23 @@ Status against `@.claude/design/design-doc.md`, updated after each session.
   after race 1. Truncation only ever removes guests from within the single
   tied group at the boundary; `Leaderboard.truncated_count` and
   `truncated_points` report what was cut.
+- `bet.superseded_by` (a self-referencing FK pointing at the replacement
+  bet) was replaced with `bet.superseded_at` (a plain nullable timestamp,
+  no FK). The partial unique index on `bet` is checked per-statement, not
+  at commit, so `superseded_by` made it impossible to satisfy both the
+  uniqueness index and the FK in any two-statement ordering — this was the
+  "supersede ordering gotcha" recorded against Step 3 below. It also forced
+  `tests/test_db.py` into supersede-target workarounds that pointed a bet
+  at an unrelated bet in a different race purely to have a valid FK value,
+  which corrupted the meaning of the column in test data.
+  `superseded_at` sidesteps the ordering problem entirely: an `UPDATE ...
+  SET superseded_at = ?` on the old live bet, followed by the `INSERT` of
+  its replacement, satisfies the partial unique index with no FK to
+  satisfy at all. The replacement bet is still recoverable without a
+  pointer — it's simply that guest's next bet in the race, ordered by
+  `created_at`. Implemented as `db.place_or_replace_bet()`, a single
+  atomic operation via the new `db.transaction()` helper, replacing the
+  raw `mark_bet_superseded` primitive.
 
 ## Open questions for later steps
 
@@ -39,9 +57,11 @@ Status against `@.claude/design/design-doc.md`, updated after each session.
   present in `logged_in_guest_ids`. The router must catch this and redirect
   to login rather than letting it surface as a 500 — a guest should never
   see an error page mid-event.
-- Step 3 (`bets.py`): the partial unique index on `bet` checks per-statement,
-  not at commit, so there is no naive two-statement ordering of "insert
-  replacement bet" / "mark old bet superseded" that satisfies both the
-  uniqueness index and the FK on `superseded_by` — see the "supersede
-  ordering gotcha" section in
-  `@.claude/implementation/002-storage-layer.md` for a worked pattern.
+- Step 3 (`bets.py`): `fetch_bet_by_client_bet_id` is the natural idempotency
+  pre-check, but a pre-check-then-write is technically a TOCTOU race — two
+  requests with the same `client_bet_id` could both pass the check before
+  either writes. Harmless under the single-uvicorn-worker deployment target
+  here, and `place_or_replace_bet` rolls back cleanly on the resulting
+  `client_bet_id` UNIQUE violation, but `bets.py` should treat that
+  `IntegrityError` as the authoritative idempotency signal rather than
+  relying on the pre-check alone.

@@ -214,22 +214,114 @@ def test_only_one_live_bet_per_guest_per_race_allowed(initialised_db):
         db.insert_bet(1, guest_id, 2, _uid(), _now())
 
 
-def test_marking_bet_superseded_permits_a_new_live_bet(initialised_db):
+def test_place_or_replace_bet_supersedes_the_old_live_bet(initialised_db):
     guest_id = _add_guest("jdoe", "Jane Doe", logged_in=True)
     first_bet_id = db.insert_bet(1, guest_id, 1, _uid(), _now())
-    # A bet in a different race, used only as a valid FK target for
-    # marking first_bet_id superseded ahead of inserting its replacement —
-    # the partial unique index forbids two live (race=1, guest) rows ever
-    # coexisting, so first_bet_id must already be non-live before the
-    # replacement bet for race 1 can be inserted.
-    other_bet_id = db.insert_bet(2, guest_id, 1, _uid(), _now())
-    db.mark_bet_superseded(first_bet_id, other_bet_id)
 
-    db.insert_bet(1, guest_id, 2, _uid(), _now())
+    result = db.place_or_replace_bet(1, guest_id, 2, _uid(), _now())
+    assert result.replaced is True
+
+    with db.get_connection() as conn:
+        first_bet = conn.execute(
+            "SELECT superseded_at FROM bet WHERE id = ?", (first_bet_id,)
+        ).fetchone()
+    assert first_bet["superseded_at"] is not None
 
     live = {(b.race_number, b.horse_number) for b in db.get_live_bets()}
     assert (1, 2) in live
     assert (1, 1) not in live
+
+
+def test_place_or_replace_bet_called_twice_leaves_one_live_and_one_superseded(
+    initialised_db,
+):
+    guest_id = _add_guest("jdoe", "Jane Doe", logged_in=True)
+    first_result = db.place_or_replace_bet(1, guest_id, 1, _uid(), _now())
+    assert first_result.replaced is False
+    second_result = db.place_or_replace_bet(1, guest_id, 2, _uid(), _now())
+    assert second_result.replaced is True
+
+    with db.get_connection() as conn:
+        rows = {
+            row["id"]: row["superseded_at"]
+            for row in conn.execute("SELECT id, superseded_at FROM bet").fetchall()
+        }
+    assert rows[first_result.bet_id] is not None
+    assert rows[second_result.bet_id] is None
+
+
+def test_place_or_replace_bet_with_no_existing_bet_inserts_only(initialised_db):
+    guest_id = _add_guest("jdoe", "Jane Doe", logged_in=True)
+
+    result = db.place_or_replace_bet(1, guest_id, 4, _uid(), _now())
+    assert result.replaced is False
+
+    with db.get_connection() as conn:
+        row = conn.execute(
+            "SELECT superseded_at FROM bet WHERE id = ?", (result.bet_id,)
+        ).fetchone()
+        count = conn.execute("SELECT COUNT(*) AS n FROM bet").fetchone()["n"]
+    assert row["superseded_at"] is None
+    assert count == 1
+
+
+def test_place_or_replace_bet_rolls_back_when_insert_fails(initialised_db):
+    guest_id = _add_guest("jdoe", "Jane Doe", logged_in=True)
+    client_bet_id = _uid()
+    original_id = db.place_or_replace_bet(1, guest_id, 1, client_bet_id, _now()).bet_id
+
+    with pytest.raises(sqlite3.IntegrityError):
+        db.place_or_replace_bet(1, guest_id, 2, client_bet_id, _now())
+
+    with db.get_connection() as conn:
+        row = conn.execute(
+            "SELECT superseded_at FROM bet WHERE id = ?", (original_id,)
+        ).fetchone()
+        count = conn.execute("SELECT COUNT(*) AS n FROM bet").fetchone()["n"]
+    assert row["superseded_at"] is None  # original still live
+    assert count == 1  # no orphan row
+    assert len(db.get_live_bets()) == 1
+
+
+def test_transaction_rolls_back_fully_on_exception(migrated_db):
+    with pytest.raises(RuntimeError):
+        with db.transaction() as conn:
+            db.insert_guest("jdoe", "Jane Doe", _now(), conn=conn)
+            raise RuntimeError("boom")
+
+    with db.get_connection() as conn:
+        count = conn.execute("SELECT COUNT(*) AS n FROM guest").fetchone()["n"]
+    assert count == 0
+
+
+def test_transaction_commits_multiple_writes_together(migrated_db):
+    with db.transaction() as conn:
+        db.insert_guest("jdoe", "Jane Doe", _now(), conn=conn)
+        db.append_audit_log(_now(), "system", "test_action", "{}", conn=conn)
+
+    with db.get_connection() as conn:
+        guest_count = conn.execute("SELECT COUNT(*) AS n FROM guest").fetchone()["n"]
+        audit_count = conn.execute(
+            "SELECT COUNT(*) AS n FROM audit_log"
+        ).fetchone()["n"]
+    assert guest_count == 1
+    assert audit_count == 1
+
+
+def test_transaction_rolls_back_multiple_writes_together(migrated_db):
+    with pytest.raises(RuntimeError):
+        with db.transaction() as conn:
+            db.insert_guest("jdoe", "Jane Doe", _now(), conn=conn)
+            db.append_audit_log(_now(), "system", "test_action", "{}", conn=conn)
+            raise RuntimeError("boom")
+
+    with db.get_connection() as conn:
+        guest_count = conn.execute("SELECT COUNT(*) AS n FROM guest").fetchone()["n"]
+        audit_count = conn.execute(
+            "SELECT COUNT(*) AS n FROM audit_log"
+        ).fetchone()["n"]
+    assert guest_count == 0
+    assert audit_count == 0
 
 
 def test_duplicate_client_bet_id_rejected(initialised_db):
@@ -250,9 +342,8 @@ def test_foreign_key_violation_rejected(initialised_db):
 
 def test_get_live_bets_excludes_superseded_bets(initialised_db):
     guest_id = _add_guest("jdoe", "Jane Doe", logged_in=True)
-    first_bet_id = db.insert_bet(1, guest_id, 1, _uid(), _now())
-    second_bet_id = db.insert_bet(2, guest_id, 3, _uid(), _now())
-    db.mark_bet_superseded(first_bet_id, second_bet_id)
+    db.insert_bet(1, guest_id, 1, _uid(), _now())
+    db.place_or_replace_bet(1, guest_id, 3, _uid(), _now())
 
     live_bets = db.get_live_bets()
     assert [b.horse_number for b in live_bets] == [3]

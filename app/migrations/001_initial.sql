@@ -49,12 +49,12 @@ CREATE TABLE bet (
     horse_number   INTEGER NOT NULL REFERENCES horse(number),
     client_bet_id  TEXT NOT NULL UNIQUE,
     created_at     TEXT NOT NULL,
-    superseded_by  INTEGER REFERENCES bet(id)
+    superseded_at  TEXT
 );
 
 -- At most one live (non-superseded) bet per guest per race.
 CREATE UNIQUE INDEX idx_bet_one_live_per_guest_race
-    ON bet(race_number, guest_id) WHERE superseded_by IS NULL;
+    ON bet(race_number, guest_id) WHERE superseded_at IS NULL;
 
 CREATE INDEX idx_bet_race_number ON bet(race_number);
 

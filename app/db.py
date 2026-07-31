@@ -12,6 +12,7 @@ import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -76,6 +77,26 @@ def get_connection() -> Iterator[sqlite3.Connection]:
     try:
         _apply_pragmas(conn)
         yield conn
+    finally:
+        conn.close()
+
+
+@contextmanager
+def transaction() -> Iterator[sqlite3.Connection]:
+    """Composes multiple write primitives into one atomic unit of work.
+
+    Pass the yielded connection as the `conn` kwarg to write primitives so
+    they use it instead of opening their own. Commits on clean exit, rolls
+    back on any exception raised inside the block, always closes.
+    """
+    conn = sqlite3.connect(_database_path())
+    try:
+        _apply_pragmas(conn)
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -167,40 +188,35 @@ def initialise_event(horse_count: int, total_races: int) -> None:
     already been applied. Raises EventAlreadyInitialisedError if called
     twice.
     """
-    with get_connection() as conn:
+    with transaction() as conn:
         row = conn.execute(
             "SELECT value FROM meta WHERE key = 'event_initialised'"
         ).fetchone()
         if row is not None and row["value"] == "true":
             raise EventAlreadyInitialisedError("event has already been initialised")
-        try:
-            conn.executemany(
-                "INSERT INTO horse (number, name) VALUES (?, NULL)",
-                [(n,) for n in range(1, horse_count + 1)],
-            )
-            conn.executemany(
-                "INSERT INTO race (number, status) VALUES (?, 'SCHEDULED')",
-                [(n,) for n in range(1, total_races + 1)],
-            )
-            conn.executemany(
-                "INSERT INTO race_entry (race_number, horse_number) VALUES (?, ?)",
-                [
-                    (race_n, horse_n)
-                    for race_n in range(1, total_races + 1)
-                    for horse_n in range(1, horse_count + 1)
-                ],
-            )
-            conn.execute(
-                "INSERT INTO meta (key, value) VALUES ('total_races', ?)",
-                (str(total_races),),
-            )
-            conn.execute(
-                "INSERT INTO meta (key, value) VALUES ('event_initialised', 'true')"
-            )
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
+        conn.executemany(
+            "INSERT INTO horse (number, name) VALUES (?, NULL)",
+            [(n,) for n in range(1, horse_count + 1)],
+        )
+        conn.executemany(
+            "INSERT INTO race (number, status) VALUES (?, 'SCHEDULED')",
+            [(n,) for n in range(1, total_races + 1)],
+        )
+        conn.executemany(
+            "INSERT INTO race_entry (race_number, horse_number) VALUES (?, ?)",
+            [
+                (race_n, horse_n)
+                for race_n in range(1, total_races + 1)
+                for horse_n in range(1, horse_count + 1)
+            ],
+        )
+        conn.execute(
+            "INSERT INTO meta (key, value) VALUES ('total_races', ?)",
+            (str(total_races),),
+        )
+        conn.execute(
+            "INSERT INTO meta (key, value) VALUES ('event_initialised', 'true')"
+        )
 
 
 # --- reads that feed the Step 1 pure modules directly -----------------------
@@ -243,7 +259,7 @@ def get_live_bets() -> list[Bet]:
     with get_connection() as conn:
         rows = conn.execute(
             "SELECT guest_id, race_number, horse_number FROM bet "
-            "WHERE superseded_by IS NULL"
+            "WHERE superseded_at IS NULL"
         ).fetchall()
     return [
         Bet(
@@ -279,14 +295,23 @@ def fetch_guest_by_device_token(device_token: str) -> sqlite3.Row | None:
         ).fetchone()
 
 
-def insert_guest(username: str, display_name: str, created_at: str) -> int:
-    with get_connection() as conn:
-        cur = conn.execute(
-            "INSERT INTO guest (username, display_name, created_at) VALUES (?, ?, ?)",
-            (username, display_name, created_at),
-        )
-        conn.commit()
-        return cur.lastrowid
+def insert_guest(
+    username: str,
+    display_name: str,
+    created_at: str,
+    *,
+    conn: sqlite3.Connection | None = None,
+) -> int:
+    if conn is None:
+        with get_connection() as c:
+            result = insert_guest(username, display_name, created_at, conn=c)
+            c.commit()
+            return result
+    cur = conn.execute(
+        "INSERT INTO guest (username, display_name, created_at) VALUES (?, ?, ?)",
+        (username, display_name, created_at),
+    )
+    return cur.lastrowid
 
 
 def get_horses() -> list[sqlite3.Row]:
@@ -315,24 +340,59 @@ def insert_bet(
     horse_number: int,
     client_bet_id: str,
     created_at: str,
+    *,
+    conn: sqlite3.Connection | None = None,
 ) -> int:
-    with get_connection() as conn:
+    """Low-level primitive: inserts a bet row with no supersede handling and
+    no idempotency check. Guest-facing bet writes must go through
+    place_or_replace_bet instead — this exists for test setup and bulk
+    seeding only.
+    """
+    if conn is None:
+        with get_connection() as c:
+            result = insert_bet(
+                race_number, guest_id, horse_number, client_bet_id, created_at, conn=c
+            )
+            c.commit()
+            return result
+    cur = conn.execute(
+        "INSERT INTO bet "
+        "(race_number, guest_id, horse_number, client_bet_id, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (race_number, guest_id, horse_number, client_bet_id, created_at),
+    )
+    return cur.lastrowid
+
+
+@dataclass(frozen=True)
+class BetWriteResult:
+    bet_id: int
+    replaced: bool
+
+
+def place_or_replace_bet(
+    race_number: int,
+    guest_id: int,
+    horse_number: int,
+    client_bet_id: str,
+    created_at: str,
+) -> BetWriteResult:
+    """Supersedes any live bet for (race_number, guest_id) and inserts the
+    replacement, atomically. No validation beyond what the schema enforces —
+    race status, horse-in-race, and idempotency checks are Step 3's
+    bets.py's job; db.py only guarantees this happens atomically.
+    """
+    with transaction() as conn:
         cur = conn.execute(
-            "INSERT INTO bet "
-            "(race_number, guest_id, horse_number, client_bet_id, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (race_number, guest_id, horse_number, client_bet_id, created_at),
+            "UPDATE bet SET superseded_at = ? "
+            "WHERE race_number = ? AND guest_id = ? AND superseded_at IS NULL",
+            (created_at, race_number, guest_id),
         )
-        conn.commit()
-        return cur.lastrowid
-
-
-def mark_bet_superseded(bet_id: int, superseded_by: int) -> None:
-    with get_connection() as conn:
-        conn.execute(
-            "UPDATE bet SET superseded_by = ? WHERE id = ?", (superseded_by, bet_id)
+        replaced = cur.rowcount > 0
+        bet_id = insert_bet(
+            race_number, guest_id, horse_number, client_bet_id, created_at, conn=conn
         )
-        conn.commit()
+        return BetWriteResult(bet_id=bet_id, replaced=replaced)
 
 
 def fetch_bet_by_client_bet_id(client_bet_id: str) -> sqlite3.Row | None:
@@ -342,15 +402,25 @@ def fetch_bet_by_client_bet_id(client_bet_id: str) -> sqlite3.Row | None:
         ).fetchone()
 
 
-def append_audit_log(at: str, actor: str, action: str, payload_json: str) -> int:
-    with get_connection() as conn:
-        cur = conn.execute(
-            "INSERT INTO audit_log (at, actor, action, payload_json) "
-            "VALUES (?, ?, ?, ?)",
-            (at, actor, action, payload_json),
-        )
-        conn.commit()
-        return cur.lastrowid
+def append_audit_log(
+    at: str,
+    actor: str,
+    action: str,
+    payload_json: str,
+    *,
+    conn: sqlite3.Connection | None = None,
+) -> int:
+    if conn is None:
+        with get_connection() as c:
+            result = append_audit_log(at, actor, action, payload_json, conn=c)
+            c.commit()
+            return result
+    cur = conn.execute(
+        "INSERT INTO audit_log (at, actor, action, payload_json) "
+        "VALUES (?, ?, ?, ?)",
+        (at, actor, action, payload_json),
+    )
+    return cur.lastrowid
 
 
 def get_meta(key: str) -> str | None:
@@ -359,11 +429,14 @@ def get_meta(key: str) -> str | None:
     return row["value"] if row is not None else None
 
 
-def set_meta(key: str, value: str) -> None:
-    with get_connection() as conn:
-        conn.execute(
-            "INSERT INTO meta (key, value) VALUES (?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            (key, value),
-        )
-        conn.commit()
+def set_meta(key: str, value: str, *, conn: sqlite3.Connection | None = None) -> None:
+    if conn is None:
+        with get_connection() as c:
+            set_meta(key, value, conn=c)
+            c.commit()
+            return
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES (?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (key, value),
+    )

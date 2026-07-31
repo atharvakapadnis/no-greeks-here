@@ -38,16 +38,20 @@ instance. Small payloads matter: venue wifi is the most likely thing to fail.
          opened_at, locked_at, settled_at)
     race_entry(race_number, horse_number, scratched)
     bet(id, race_number, guest_id, horse_number, client_bet_id,
-        created_at, superseded_by)
+        created_at, superseded_at)
     audit_log(id, at, actor, action, payload_json)
 
 Notes:
 
 - `race_entry` exists so scratching a horse cannot rewrite completed races.
   Default is every horse runs every race.
-- `bet` is append-only. Changing a bet inserts a new row and sets
-  `superseded_by` on the old one. Never UPDATE a bet row. Current bet =
-  latest non-superseded row per (race, guest).
+- `bet` is append-only in its substantive fields. Changing a bet inserts a
+  new row and sets `superseded_at` on the old one — the only field ever
+  updated on an existing bet row, and only to record when it stopped being
+  live. Current bet = latest row with `superseded_at IS NULL` per
+  (race, guest); the superseded row itself is recoverable as that guest's
+  next bet in the race ordered by `created_at`, so no pointer between the
+  two rows is needed.
 - `client_bet_id` is a UUID generated on the phone. It is the idempotency key:
   a retried request with the same id is a no-op, never a second bet.
 - Types must match the Step 1 pure service dataclasses so the Step 2 DB layer
@@ -226,7 +230,9 @@ loud, which is the primary channel anyway.
   workers would each reach only a fraction of the room. It also keeps SQLite to
   a single writer. 75 guests leaves compute to spare.
 - Dense ranking, not competition ranking.
-- Append-only bets, never UPDATE.
+- Bets are substantively append-only: `superseded_at` is the only column
+  ever updated on an existing bet row (to mark it no longer live). Every
+  other field is immutable after insert.
 - Raw SQL, not an ORM.
 - No credentials in source. Everything via env vars.
 - Total races is configurable (default 10) but cannot be reduced below the
