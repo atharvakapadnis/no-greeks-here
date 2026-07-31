@@ -12,8 +12,10 @@ Status against `@.claude/design/design-doc.md`, updated after each session.
       2026-07-31 (`superseded_at` + composable transactions). 29 tests in
       `test_db.py` (83 total passing). See
       `@.claude/implementation/002-storage-layer.md`.
-- [ ] 3. `services/races.py` + `services/bets.py` with tests. The state machine is
-      where correctness lives.
+- [x] 3. `services/races.py` + `services/bets.py` with tests. The state machine is
+      where correctness lives. Completed 2026-07-31. 104 tests in
+      `test_races.py` + `test_bets.py` (187 total passing). See
+      `@.claude/implementation/003-race-state-and-bets.md`.
 - [ ] 4. Routers and templates, guest side first.
 - [ ] 5. SSE and client resilience in `static/app.js`.
 - [ ] 6. Docker, Litestream, Lightsail. Then rehearse a restore twice before the
@@ -49,6 +51,51 @@ Status against `@.claude/design/design-doc.md`, updated after each session.
   `created_at`. Implemented as `db.place_or_replace_bet()`, a single
   atomic operation via the new `db.transaction()` helper, replacing the
   raw `mark_bet_superseded` primitive.
+- `current_state(now)` never returns a null/empty view, even once every
+  race is `SETTLED`. `current_race_number()` still returns `None` in that
+  case exactly as specified, but `current_state` falls back to the
+  highest-numbered race and reports it `SETTLED` with its result, plus a
+  new `RaceState.event_complete: bool` field (`True` only when every race
+  is settled). The design doc's guest-screen states (waiting/open/locked)
+  never defined a fourth "event over" state — that was a gap in the doc,
+  not a reason for the read model to go blank at the end of the night.
+- `set_scratched` is permitted while `SCHEDULED` **or** `OPEN`, not
+  `SCHEDULED`-only as originally scoped — a horse can pull up lame after
+  betting opens and there must be a recovery path. Scratching
+  (`scratched=True`) a horse mid-`OPEN` now voids every live bet on that
+  horse in that race (superseded, no replacement — a new
+  `db.void_live_bets_for_horse` primitive, since `place_or_replace_bet`
+  always inserts a replacement and can't express a void) in the same
+  transaction as the flag change, with exactly one `race.scratch_set`
+  audit row whose payload lists the affected `guest_id`s regardless of how
+  many bets were voided. Unscratching deliberately does not restore voided
+  bets — guests must re-bet.
+- `operator_set_bet` does not require the guest to be logged in (no
+  `GuestNotLoggedInError` check — only `GuestNotFoundError`) and validates
+  the horse is entered/not-scratched (`HorseNotInRaceError`, same as
+  `place_bet`) even though the original brief read as "rejects only on
+  SETTLED." The no-login-required change is required for the paper
+  fallback in the design doc: the operator keys in bets after a network
+  outage for guests who never claimed a device. If the guest's
+  `claimed_at` is `NULL`, `operator_set_bet` now sets it to `now` in the
+  same transaction as the bet and audit writes (a new `db.set_guest_claimed_at`
+  primitive) — this is what makes such a guest appear on the leaderboard at
+  all, since `build_leaderboard` only ranks `claimed_at IS NOT NULL`
+  guests. An existing `claimed_at` is never overwritten. `device_token`
+  stays `NULL`, so the guest can still claim a phone later.
+- `place_bet`'s idempotent short-circuit (a repeated `client_bet_id`, via
+  either the pre-check or the `IntegrityError` catch) builds its
+  `BetOutcome` **entirely from the stored bet row** — `bet_id` and
+  `horse_number` both — never from the `horse_number` argument the caller
+  passed in. A slow retry for an old horse can arrive after a faster,
+  distinct-`client_bet_id` request already changed the live bet; echoing
+  the submitted horse instead of the stored one would tell the guest
+  they're confirmed on a horse the database doesn't have them on.
+- `place_bet` reuses `races.RaceNotFoundError` (imported, not redeclared)
+  for a `race_number` that doesn't exist — `BetError` itself has no
+  `RaceNotFoundError`, kept distinct from `BettingClosedError` because a
+  locked race is a normal state and a nonexistent race is a bug/tampered
+  request.
 
 ## Open questions for later steps
 
@@ -65,3 +112,27 @@ Status against `@.claude/design/design-doc.md`, updated after each session.
   `client_bet_id` UNIQUE violation, but `bets.py` should treat that
   `IntegrityError` as the authoritative idempotency signal rather than
   relying on the pre-check alone.
+- Step 4 (routers): bet endpoints must catch `(races.RaceError, bets.BetError)`
+  together — `place_bet` can now raise from either hierarchy (see
+  `RaceNotFoundError` reuse above). The guest-facing message is the same
+  for both ("betting is closed" + resync) even though the internal
+  exception differs; don't let that similarity erase the distinction in
+  logs.
+- Step 4 (routers/templates): render `BetOutcome.horse_number`, never the
+  horse the guest's request submitted — on the idempotent path they can
+  differ (see the stored-row decision above).
+- Step 4 (login/claim check): test `device_token`, not `claimed_at`, for
+  "is this device logged in." The two now mean different things:
+  `claimed_at` means "participating" (may be set by `operator_set_bet` for
+  a guest who never touched a phone), `device_token` means "this specific
+  device is the one that claimed the username."
+- Step 4 (or any future code composing `db.place_or_replace_bet(conn=...)`
+  under a shared `db.transaction()`): never catch `sqlite3.IntegrityError`
+  inline and try to continue — once a statement inside an explicit SQLite
+  transaction fails, the whole transaction is aborted, so there is no
+  catch-and-still-commit recovery. Only the standalone form
+  (`conn=None`, which owns and has already rolled back its own
+  transaction by the time the exception surfaces) may catch
+  `IntegrityError` and recover by re-reading, as `bets.place_bet` does.
+  `bets.operator_set_bet` deliberately does not catch it, for exactly this
+  reason — see its docstring and `db.place_or_replace_bet`'s.

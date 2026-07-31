@@ -376,23 +376,45 @@ def place_or_replace_bet(
     horse_number: int,
     client_bet_id: str,
     created_at: str,
+    *,
+    conn: sqlite3.Connection | None = None,
 ) -> BetWriteResult:
     """Supersedes any live bet for (race_number, guest_id) and inserts the
     replacement, atomically. No validation beyond what the schema enforces —
     race status, horse-in-race, and idempotency checks are Step 3's
     bets.py's job; db.py only guarantees this happens atomically.
+
+    Pass conn to compose this with other writes (e.g. an audit_log row)
+    under a caller-owned db.transaction(); omitting it opens and commits a
+    standalone transaction here.
+
+    WARNING: a sqlite3.IntegrityError raised here (e.g. a duplicate
+    client_bet_id) can only be caught-and-recovered-from when conn is None
+    — that path's transaction() has already rolled back by the time the
+    exception reaches the caller, so a fresh read afterwards is safe (this
+    is exactly what bets.place_bet does). When conn is supplied by the
+    caller, SQLite has already aborted that shared transaction the moment
+    the statement fails: there is no catch-and-still-commit recovery in
+    that case. Callers composing this under their own db.transaction()
+    (e.g. bets.operator_set_bet) must let the exception propagate so the
+    whole block rolls back — never catch sqlite3.IntegrityError inline and
+    try to continue.
     """
-    with transaction() as conn:
-        cur = conn.execute(
-            "UPDATE bet SET superseded_at = ? "
-            "WHERE race_number = ? AND guest_id = ? AND superseded_at IS NULL",
-            (created_at, race_number, guest_id),
-        )
-        replaced = cur.rowcount > 0
-        bet_id = insert_bet(
-            race_number, guest_id, horse_number, client_bet_id, created_at, conn=conn
-        )
-        return BetWriteResult(bet_id=bet_id, replaced=replaced)
+    if conn is None:
+        with transaction() as c:
+            return place_or_replace_bet(
+                race_number, guest_id, horse_number, client_bet_id, created_at, conn=c
+            )
+    cur = conn.execute(
+        "UPDATE bet SET superseded_at = ? "
+        "WHERE race_number = ? AND guest_id = ? AND superseded_at IS NULL",
+        (created_at, race_number, guest_id),
+    )
+    replaced = cur.rowcount > 0
+    bet_id = insert_bet(
+        race_number, guest_id, horse_number, client_bet_id, created_at, conn=conn
+    )
+    return BetWriteResult(bet_id=bet_id, replaced=replaced)
 
 
 def fetch_bet_by_client_bet_id(client_bet_id: str) -> sqlite3.Row | None:
@@ -439,4 +461,177 @@ def set_meta(key: str, value: str, *, conn: sqlite3.Connection | None = None) ->
         "INSERT INTO meta (key, value) VALUES (?, ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         (key, value),
+    )
+
+
+# --- primitives for Step 3 (races.py / bets.py) ------------------------------
+
+
+def update_race_status(
+    race_number: int,
+    status: str,
+    *,
+    conn: sqlite3.Connection | None = None,
+    **timestamps: str | None,
+) -> None:
+    """Sets race.status plus any of opened_at/locked_at/settled_at passed as
+    keyword arguments, in one UPDATE. A timestamp value of None clears that
+    column. Does not touch auto_lock_at — use set_race_auto_lock for that
+    (kept separate so races.py can clear the auto-lock timer independently
+    of a status change, e.g. on lock/reopen). No opinion on whether the
+    transition is legal — that is races.py's job.
+    """
+    if conn is None:
+        with get_connection() as c:
+            update_race_status(race_number, status, conn=c, **timestamps)
+            c.commit()
+            return
+    columns = ", ".join(f"{col} = ?" for col in timestamps)
+    sql = "UPDATE race SET status = ?"
+    sql += (", " + columns) if columns else ""
+    sql += " WHERE number = ?"
+    params = [status, *timestamps.values(), race_number]
+    conn.execute(sql, params)
+
+
+def settle_race_result(
+    race_number: int,
+    first: int,
+    second: int,
+    third: int,
+    settled_at: str,
+    *,
+    conn: sqlite3.Connection | None = None,
+) -> None:
+    """Sets status='SETTLED', the three placings, and settled_at in one
+    statement — kept as its own primitive rather than composed from
+    update_race_status because the race table's CHECK constraints (placings
+    distinct, all non-null once SETTLED) need status and placings landing
+    together. Used by both a first settle and a later correction. No
+    opinion on whether the transition is legal or the placings are valid —
+    that is races.py's job.
+    """
+    if conn is None:
+        with get_connection() as c:
+            settle_race_result(race_number, first, second, third, settled_at, conn=c)
+            c.commit()
+            return
+    conn.execute(
+        "UPDATE race SET status = 'SETTLED', first = ?, second = ?, third = ?, "
+        "settled_at = ? WHERE number = ?",
+        (first, second, third, settled_at, race_number),
+    )
+
+
+def set_race_auto_lock(
+    race_number: int,
+    auto_lock_at: str | None,
+    *,
+    conn: sqlite3.Connection | None = None,
+) -> None:
+    if conn is None:
+        with get_connection() as c:
+            set_race_auto_lock(race_number, auto_lock_at, conn=c)
+            c.commit()
+            return
+    conn.execute(
+        "UPDATE race SET auto_lock_at = ? WHERE number = ?",
+        (auto_lock_at, race_number),
+    )
+
+
+def set_horse_scratched(
+    race_number: int,
+    horse_number: int,
+    scratched: bool,
+    *,
+    conn: sqlite3.Connection | None = None,
+) -> None:
+    if conn is None:
+        with get_connection() as c:
+            set_horse_scratched(race_number, horse_number, scratched, conn=c)
+            c.commit()
+            return
+    conn.execute(
+        "UPDATE race_entry SET scratched = ? WHERE race_number = ? AND horse_number = ?",
+        (int(scratched), race_number, horse_number),
+    )
+
+
+def void_live_bets_for_horse(
+    race_number: int,
+    horse_number: int,
+    voided_at: str,
+    *,
+    conn: sqlite3.Connection | None = None,
+) -> list[int]:
+    """Supersedes every live bet on (race_number, horse_number) with no
+    replacement inserted — used when a horse is scratched out from under
+    bets already placed on it. Returns the guest_ids affected, for the
+    caller's audit payload. place_or_replace_bet cannot express this: it
+    always inserts a replacement bet, which is not what a void is.
+    """
+    if conn is None:
+        with transaction() as c:
+            return void_live_bets_for_horse(race_number, horse_number, voided_at, conn=c)
+    rows = conn.execute(
+        "SELECT guest_id FROM bet WHERE race_number = ? AND horse_number = ? "
+        "AND superseded_at IS NULL",
+        (race_number, horse_number),
+    ).fetchall()
+    guest_ids = [row["guest_id"] for row in rows]
+    conn.execute(
+        "UPDATE bet SET superseded_at = ? WHERE race_number = ? AND horse_number = ? "
+        "AND superseded_at IS NULL",
+        (voided_at, race_number, horse_number),
+    )
+    return guest_ids
+
+
+def fetch_live_bet(race_number: int, guest_id: int) -> sqlite3.Row | None:
+    with get_connection() as conn:
+        return conn.execute(
+            "SELECT * FROM bet WHERE race_number = ? AND guest_id = ? "
+            "AND superseded_at IS NULL",
+            (race_number, guest_id),
+        ).fetchone()
+
+
+def fetch_races() -> list[sqlite3.Row]:
+    with get_connection() as conn:
+        return conn.execute("SELECT * FROM race ORDER BY number").fetchall()
+
+
+def fetch_bets_for_race(race_number: int) -> list[sqlite3.Row]:
+    """Live bets only (superseded_at IS NULL)."""
+    with get_connection() as conn:
+        return conn.execute(
+            "SELECT * FROM bet WHERE race_number = ? AND superseded_at IS NULL",
+            (race_number,),
+        ).fetchall()
+
+
+def count_live_bets(race_number: int) -> int:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM bet WHERE race_number = ? AND superseded_at IS NULL",
+            (race_number,),
+        ).fetchone()
+    return row["n"]
+
+
+def set_guest_claimed_at(
+    guest_id: int, claimed_at: str, *, conn: sqlite3.Connection | None = None
+) -> None:
+    """Unconditional setter — no opinion on whether overwriting an existing
+    claimed_at is appropriate. bets.operator_set_bet only calls this when
+    the guest's claimed_at is currently NULL.
+    """
+    if conn is None:
+        with get_connection() as c:
+            set_guest_claimed_at(guest_id, claimed_at, conn=c)
+            c.commit()
+            return
+    conn.execute(
+        "UPDATE guest SET claimed_at = ? WHERE id = ?", (claimed_at, guest_id)
     )
