@@ -8,7 +8,9 @@ Status against `@.claude/design/design-doc.md`, updated after each session.
       DB, no AWS. Username collisions and dense ranking settled here.
       Completed 2026-07-30. 54 tests passing. See
       `@.claude/implementation/001-pure-service-modules.md`.
-- [ ] 2. `db.py` + `migrations/001_initial.sql`.
+- [x] 2. `db.py` + `migrations/001_initial.sql`. Completed 2026-07-31. 23 new
+      tests (77 total passing). See
+      `@.claude/implementation/002-storage-layer.md`.
 - [ ] 3. `services/races.py` + `services/bets.py` with tests. The state machine is
       where correctness lives.
 - [ ] 4. Routers and templates, guest side first.
@@ -37,3 +39,9 @@ Status against `@.claude/design/design-doc.md`, updated after each session.
   present in `logged_in_guest_ids`. The router must catch this and redirect
   to login rather than letting it surface as a 500 — a guest should never
   see an error page mid-event.
+- Step 3 (`bets.py`): the partial unique index on `bet` checks per-statement,
+  not at commit, so there is no naive two-statement ordering of "insert
+  replacement bet" / "mark old bet superseded" that satisfies both the
+  uniqueness index and the FK on `superseded_by` — see the "supersede
+  ordering gotcha" section in
+  `@.claude/implementation/002-storage-layer.md` for a worked pattern.
