@@ -1,0 +1,11 @@
+{% if error_message %}
+<p class="banner banner--error">{{ error_message }}</p>
+{% endif %}
+<div class="state state--locked">
+  <h2 class="state__title">Race {{ race_number }} — locked</h2>
+  {% if current_horse is none %}
+  <p class="state__body">You didn't bet this race.</p>
+  {% else %}
+  <p class="your-horse">#{{ current_horse }}</p>
+  {% endif %}
+</div>

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Log in{% endblock %}
+{% block content %}
+<div class="login">
+  <h1 class="login__title">no-greeks-here</h1>
+  {% if error_message %}
+  <p class="banner banner--error">{{ error_message }}</p>
+  {% endif %}
+  <form class="login__form" method="post" action="/login">
+    <label class="login__label" for="username">Your username</label>
+    <input
+      class="login__input"
+      type="text"
+      id="username"
+      name="username"
+      autocomplete="username"
+      autocapitalize="none"
+      autocorrect="off"
+      spellcheck="false"
+      required
+      autofocus
+    >
+    <button class="btn btn--primary" type="submit">Log in</button>
+  </form>
+</div>
+{% endblock %}

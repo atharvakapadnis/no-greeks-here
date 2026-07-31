@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from app import db
+from app.services.clock import require_aware
 from app.services.races import RaceNotFoundError
 
 
@@ -111,6 +112,7 @@ def place_bet(
     us — see the warning on db.place_or_replace_bet before reusing this
     pattern anywhere a shared conn is involved.
     """
+    require_aware(now)
     existing = db.fetch_bet_by_client_bet_id(client_bet_id)
     if existing is not None:
         return _outcome_from_row(existing, idempotent=True)
@@ -194,6 +196,7 @@ def operator_set_bet(
     propagate out of the `with db.transaction()` block so the bet, the
     claimed_at update, and the audit row all roll back together.
     """
+    require_aware(now)
     guest = db.fetch_guest_by_id(guest_id)
     if guest is None:
         raise GuestNotFoundError(f"guest {guest_id} not found")

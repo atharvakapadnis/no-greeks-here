@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Bet{% endblock %}
+{% block content %}
+<!--
+  Step 5 replaces this fixed-interval poll with SSE: a persistent push
+  connection, visibility-change resync (refetch + reopen the stream when the
+  phone unlocks), a 15s heartbeat with a "reconnecting" state after 30s of
+  silence, and this same polling loop kept only as the fallback when SSE
+  can't be established.
+-->
+<div id="bet-state" hx-get="/state" hx-trigger="every 3s" hx-swap="innerHTML">
+  {% include "guest/partials/" + state_name + ".html" %}
+</div>
+{% endblock %}

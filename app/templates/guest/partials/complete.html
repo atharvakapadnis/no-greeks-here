@@ -1,0 +1,15 @@
+{% if error_message %}
+<p class="banner banner--error">{{ error_message }}</p>
+{% endif %}
+<div class="state state--complete">
+  <h2 class="state__title">That's a wrap</h2>
+  <p class="state__body">Race {{ race_number }} result: 1st #{{ result.first }}, 2nd #{{ result.second }}, 3rd #{{ result.third }}</p>
+  {% if guest_horse is none %}
+  <p class="prev-outcome__line">You didn't bet this race.</p>
+  {% else %}
+  <p class="prev-outcome__line">
+    You had #{{ guest_horse }} — {{ guest_points }} point{{ 's' if guest_points != 1 else '' }}
+  </p>
+  {% endif %}
+  <a class="btn btn--primary" href="/leaderboard">See the leaderboard</a>
+</div>

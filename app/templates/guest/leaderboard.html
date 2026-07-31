@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Leaderboard{% endblock %}
+{% block content %}
+<div class="leaderboard">
+  <h1 class="leaderboard__title">Leaderboard</h1>
+  <table class="leaderboard__table">
+    <tbody>
+      {% for row in board.rows %}
+      <tr class="leaderboard__row{% if row.guest_id == guest['id'] %} leaderboard__row--me{% endif %}">
+        <td class="leaderboard__rank">{{ row.rank }}</td>
+        <td class="leaderboard__name">{{ row.display_name }}</td>
+        <td class="leaderboard__total">{{ row.total_points }}</td>
+      </tr>
+      {% endfor %}
+      {% if board.truncated_count > 0 %}
+      <tr class="leaderboard__row leaderboard__row--truncated">
+        <td></td>
+        <td colspan="2">+{{ board.truncated_count }} others on {{ board.truncated_points }} points</td>
+      </tr>
+      {% endif %}
+      {% if board.requesting_guest is not none and not board.requesting_guest_in_rows %}
+      <tr class="leaderboard__row leaderboard__row--me leaderboard__row--pinned">
+        <td class="leaderboard__rank">{{ board.requesting_guest.rank }}</td>
+        <td class="leaderboard__name">{{ board.requesting_guest.display_name }}</td>
+        <td class="leaderboard__total">{{ board.requesting_guest.total_points }}</td>
+      </tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

@@ -617,6 +617,66 @@ def test_current_state_when_all_races_settled_shows_final_result_and_event_compl
     assert (state.result.first, state.result.second, state.result.third) == (1, 2, 3)
 
 
+def test_current_state_open_with_no_auto_lock_has_none_seconds(initialised_db):
+    races.open_race(1, _now())
+    state = races.current_state(_now())
+    assert state.status == "OPEN"
+    assert state.seconds_to_auto_lock is None
+
+
+# --- naive datetime rejection -------------------------------------------------
+
+_NAIVE = datetime(2026, 1, 1, 12, 0, 0)
+
+
+def test_open_race_rejects_naive_datetime(initialised_db):
+    with pytest.raises(ValueError):
+        races.open_race(1, _NAIVE)
+
+
+def test_lock_race_rejects_naive_datetime(initialised_db):
+    races.open_race(1, _now())
+    with pytest.raises(ValueError):
+        races.lock_race(1, _NAIVE)
+
+
+def test_settle_race_rejects_naive_datetime(initialised_db):
+    races.open_race(1, _now())
+    races.lock_race(1, _now())
+    with pytest.raises(ValueError):
+        races.settle_race(1, 1, 2, 3, _NAIVE)
+
+
+def test_reopen_race_rejects_naive_datetime(initialised_db):
+    races.open_race(1, _now())
+    races.lock_race(1, _now())
+    with pytest.raises(ValueError):
+        races.reopen_race(1, _NAIVE)
+
+
+def test_correct_result_rejects_naive_datetime(initialised_db):
+    races.open_race(1, _now())
+    races.lock_race(1, _now())
+    races.settle_race(1, 1, 2, 3, _now())
+    with pytest.raises(ValueError):
+        races.correct_result(1, 3, 2, 1, _NAIVE)
+
+
+def test_set_scratched_rejects_naive_datetime(initialised_db):
+    with pytest.raises(ValueError):
+        races.set_scratched(1, 1, True, _NAIVE)
+
+
+def test_apply_auto_lock_rejects_naive_datetime(initialised_db):
+    with pytest.raises(ValueError):
+        races.apply_auto_lock(_NAIVE)
+
+
+def test_current_state_rejects_naive_datetime(initialised_db):
+    with pytest.raises(ValueError):
+        races.current_state(_NAIVE)
+
+
 def test_current_state_event_complete_false_while_races_remain(initialised_db):
     races.open_race(1, _now())
     races.lock_race(1, _now())

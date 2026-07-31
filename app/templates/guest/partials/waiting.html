@@ -1,0 +1,19 @@
+{% if error_message %}
+<p class="banner banner--error">{{ error_message }}</p>
+{% endif %}
+<div class="state state--waiting">
+  <h2 class="state__title">Race {{ race_number }}</h2>
+  <p class="state__body">Nothing to do yet.</p>
+  {% if previous_result is not none %}
+  <div class="prev-outcome">
+    <p class="prev-outcome__race">Race {{ previous_race_number }}</p>
+    {% if previous_horse is none %}
+    <p class="prev-outcome__line">You didn't bet.</p>
+    {% else %}
+    <p class="prev-outcome__line">
+      You had #{{ previous_horse }} — {{ previous_points }} point{{ 's' if previous_points != 1 else '' }}
+    </p>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>

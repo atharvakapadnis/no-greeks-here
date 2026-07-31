@@ -251,7 +251,11 @@ not build for scale it will never see.
 2. `db.py` + `migrations/001_initial.sql`.
 3. `services/races.py` + `services/bets.py` with tests. The state machine is
    where correctness lives.
-4. Routers and templates, guest side first.
+4a. Guest-facing routers and templates: `app/config.py`, `app/auth.py`,
+    `app/routers/guest.py`, `app/templates/guest/*`, `app/static/`,
+    `scripts/init_event.py`. Login, the bet screen, the leaderboard.
+4b. Operator-facing routers and templates: race control panel (open/lock/
+    settle/scratch), results entry, add guest, unlock device.
 5. SSE and client resilience in `static/app.js`.
 6. Docker, Litestream, Lightsail. Then rehearse a restore twice before the
    event.

@@ -620,6 +620,34 @@ def count_live_bets(race_number: int) -> int:
     return row["n"]
 
 
+def claim_guest_device(
+    guest_id: int,
+    device_token: str,
+    claimed_at: str,
+    *,
+    conn: sqlite3.Connection | None = None,
+) -> bool:
+    """First-device-wins: atomically claims device_token for guest_id iff it
+    is currently NULL, and sets claimed_at too if it is currently NULL
+    (COALESCE leaves an existing claimed_at untouched). A single UPDATE, so
+    two concurrent callers for the same guest_id race at the SQLite level —
+    exactly one gets rowcount > 0 (returns True), the other's WHERE clause
+    no longer matches by the time it runs (returns False). Callers must
+    treat False as "already claimed", not retry.
+    """
+    if conn is None:
+        with get_connection() as c:
+            result = claim_guest_device(guest_id, device_token, claimed_at, conn=c)
+            c.commit()
+            return result
+    cur = conn.execute(
+        "UPDATE guest SET device_token = ?, claimed_at = COALESCE(claimed_at, ?) "
+        "WHERE id = ? AND device_token IS NULL",
+        (device_token, claimed_at, guest_id),
+    )
+    return cur.rowcount > 0
+
+
 def set_guest_claimed_at(
     guest_id: int, claimed_at: str, *, conn: sqlite3.Connection | None = None
 ) -> None:

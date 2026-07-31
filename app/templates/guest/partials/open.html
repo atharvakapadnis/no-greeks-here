@@ -1,0 +1,28 @@
+{% if error_message %}
+<p class="banner banner--error">{{ error_message }}</p>
+{% endif %}
+<div class="state state--open">
+  <h2 class="state__title">Race {{ race_number }}</h2>
+  {% if seconds_to_auto_lock is not none %}
+  <p class="countdown">Closes in {{ seconds_to_auto_lock }}s</p>
+  {% endif %}
+  <div class="horse-grid">
+    {% for horse in horses %}
+    <button
+      type="button"
+      class="horse-btn{% if horse.number == current_horse %} horse-btn--selected{% endif %}{% if horse.scratched %} horse-btn--scratched{% endif %}"
+      {% if horse.scratched %}
+      disabled aria-disabled="true"
+      {% else %}
+      hx-post="/bet"
+      hx-vals='js:{"horse_number": {{ horse.number }}, "client_bet_id": crypto.randomUUID()}'
+      hx-target="#bet-state"
+      hx-swap="innerHTML"
+      {% endif %}
+    >
+      <span class="horse-btn__number">{{ horse.number }}</span>
+      {% if horse.number == current_horse %}<span class="horse-btn__check">&#10003;</span>{% endif %}
+    </button>
+    {% endfor %}
+  </div>
+</div>

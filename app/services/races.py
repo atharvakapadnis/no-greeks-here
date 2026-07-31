@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from app import db
+from app.services.clock import require_aware
 from app.services.scoring import RaceResult
 
 
@@ -114,6 +115,7 @@ def _validate_placings(race_number: int, first: int, second: int, third: int) ->
 def open_race(
     race_number: int, now: datetime, auto_lock_seconds: int | None = None
 ) -> None:
+    require_aware(now)
     race = _get_race(race_number)
     if race["status"] == "OPEN":
         return
@@ -145,6 +147,7 @@ def open_race(
 
 
 def lock_race(race_number: int, now: datetime) -> None:
+    require_aware(now)
     race = _get_race(race_number)
     if race["status"] == "LOCKED":
         return
@@ -167,6 +170,7 @@ def lock_race(race_number: int, now: datetime) -> None:
 def settle_race(
     race_number: int, first: int, second: int, third: int, now: datetime
 ) -> None:
+    require_aware(now)
     race = _get_race(race_number)
     if race["status"] != "LOCKED":
         raise IllegalTransitionError(
@@ -187,6 +191,7 @@ def settle_race(
 
 
 def reopen_race(race_number: int, now: datetime) -> None:
+    require_aware(now)
     race = _get_race(race_number)
     if race["status"] == "OPEN":
         return
@@ -212,6 +217,7 @@ def reopen_race(race_number: int, now: datetime) -> None:
 def correct_result(
     race_number: int, first: int, second: int, third: int, now: datetime
 ) -> None:
+    require_aware(now)
     race = _get_race(race_number)
     if race["status"] != "SETTLED":
         raise IllegalTransitionError(
@@ -250,6 +256,7 @@ def set_scratched(
     transaction as the flag change and the single audit row. Unscratching
     never restores voided bets — guests must re-bet.
     """
+    require_aware(now)
     race = _get_race(race_number)
     if race["status"] in ("LOCKED", "SETTLED"):
         raise IllegalTransitionError(
@@ -293,6 +300,7 @@ def apply_auto_lock(now: datetime) -> int | None:
     auto_lock_at is NULL, or it hasn't passed yet. Never relies on this
     having been called — bet acceptance checks the clock directly too.
     """
+    require_aware(now)
     open_races = [r for r in db.fetch_races() if r["status"] == "OPEN"]
     if not open_races:
         return None
@@ -332,6 +340,7 @@ def current_state(now: datetime) -> RaceState:
     and reports it SETTLED with its result, plus event_complete=True — it
     never returns a null/empty view.
     """
+    require_aware(now)
     races = db.fetch_races()
     race_number = current_race_number()
     event_complete = race_number is None

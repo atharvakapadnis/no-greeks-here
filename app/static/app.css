@@ -1,0 +1,235 @@
+:root {
+  --color-bg: #14161c;
+  --color-surface: #1e212b;
+  --color-surface-alt: #262a36;
+  --color-text: #f1f3f8;
+  --color-text-muted: #9aa1b2;
+  --color-accent: #ffb020;
+  --color-accent-text: #14161c;
+  --color-scratched: #4a4f5c;
+  --color-danger: #e5484d;
+  --color-border: #2f3340;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.page {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 20px 16px 96px;
+  min-height: 100vh;
+}
+
+h1, h2 {
+  margin: 0 0 12px;
+}
+
+.banner {
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  font-size: 0.95rem;
+}
+
+.banner--error {
+  background: var(--color-danger);
+  color: var(--color-text);
+}
+
+.btn {
+  display: inline-block;
+  min-height: 48px;
+  padding: 12px 20px;
+  border-radius: 8px;
+  border: none;
+  font-size: 1rem;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.btn--primary {
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+}
+
+/* --- login --- */
+
+.login__title {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.login__form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.login__label {
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+}
+
+.login__input {
+  min-height: 48px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 1rem;
+}
+
+/* --- bet screen --- */
+
+.state__title {
+  color: var(--color-text);
+}
+
+.state__body {
+  color: var(--color-text-muted);
+}
+
+.countdown {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.horse-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.horse-btn {
+  position: relative;
+  min-height: 48px;
+  height: 56px;
+  border-radius: 10px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 1.1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.horse-btn--selected {
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  border-color: var(--color-accent);
+}
+
+.horse-btn--scratched {
+  background: var(--color-scratched);
+  color: var(--color-text-muted);
+  border-color: var(--color-scratched);
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+.horse-btn__check {
+  position: absolute;
+  top: 2px;
+  right: 6px;
+  font-size: 0.9rem;
+}
+
+.your-horse {
+  font-size: 4rem;
+  font-weight: 800;
+  color: var(--color-accent);
+  margin: 24px 0;
+}
+
+.prev-outcome {
+  margin-top: 20px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--color-surface);
+}
+
+.prev-outcome__race {
+  color: var(--color-text-muted);
+  margin: 0 0 4px;
+  font-size: 0.85rem;
+}
+
+.prev-outcome__line {
+  margin: 0;
+}
+
+/* --- leaderboard --- */
+
+.leaderboard__table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.leaderboard__row {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.leaderboard__row td {
+  padding: 10px 6px;
+}
+
+.leaderboard__row--me {
+  background: var(--color-surface-alt);
+  font-weight: 700;
+}
+
+.leaderboard__row--truncated td {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.leaderboard__row--pinned {
+  border-top: 2px solid var(--color-border);
+}
+
+.leaderboard__rank {
+  width: 2.5em;
+  color: var(--color-text-muted);
+}
+
+/* --- bottom tab bar --- */
+
+.tabbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+}
+
+.tabbar__tab {
+  flex: 1;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.tabbar__tab:hover,
+.tabbar__tab:active {
+  color: var(--color-accent);
+}

@@ -405,3 +405,22 @@ def test_operator_set_bet_forced_failure_leaves_no_bet_no_claim_no_audit(
     assert db.fetch_guest_by_id(guest_id)["claimed_at"] is None
     assert len(_audit_rows()) == audit_before
     assert _bet_count() == bet_before
+
+
+# --- naive datetime rejection -------------------------------------------------
+
+_NAIVE = datetime(2026, 1, 1, 12, 0, 0)
+
+
+def test_place_bet_rejects_naive_datetime(initialised_db):
+    races.open_race(1, _now())
+    guest_id = _add_guest("jdoe", "Jane Doe", logged_in=True)
+    with pytest.raises(ValueError):
+        bets.place_bet(guest_id, 1, 1, _uid(), _NAIVE)
+
+
+def test_operator_set_bet_rejects_naive_datetime(initialised_db):
+    races.open_race(1, _now())
+    guest_id = _add_guest("jdoe", "Jane Doe", logged_in=True)
+    with pytest.raises(ValueError):
+        bets.operator_set_bet(guest_id, 1, 1, "operator", _NAIVE)

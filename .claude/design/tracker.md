@@ -16,7 +16,12 @@ Status against `@.claude/design/design-doc.md`, updated after each session.
       where correctness lives. Completed 2026-07-31. 104 tests in
       `test_races.py` + `test_bets.py` (187 total passing). See
       `@.claude/implementation/003-race-state-and-bets.md`.
-- [ ] 4. Routers and templates, guest side first.
+- [x] 4a. Guest-facing routers and templates. Completed 2026-07-31. 32 new
+      tests (`test_auth.py`, `test_guest_routes.py`) plus 11 naive-datetime
+      guard tests added to `test_races.py`/`test_bets.py` — 230 total
+      passing. See `@.claude/implementation/004-guest-web-layer.md`.
+- [ ] 4b. Operator-facing routers and templates: race control panel
+      (open/lock/settle/scratch), results entry, add guest, unlock device.
 - [ ] 5. SSE and client resilience in `static/app.js`.
 - [ ] 6. Docker, Litestream, Lightsail. Then rehearse a restore twice before the
       event.
@@ -97,42 +102,44 @@ Status against `@.claude/design/design-doc.md`, updated after each session.
   locked race is a normal state and a nonexistent race is a bug/tampered
   request.
 
+## Step 3's open questions, resolved in Step 4a
+
+All five of Step 3's carry-forward notes (leaderboard `ValueError` ->
+redirect, catching `races.RaceError`/`bets.BetError` together, rendering
+`BetOutcome.horse_number` not the submitted horse, `device_token`-not-
+`claimed_at` for login state, never catching `IntegrityError` under a
+shared `conn`) were implemented exactly as specified in
+`app/routers/guest.py`. See
+`@.claude/implementation/004-guest-web-layer.md` for where each landed.
+
 ## Open questions for later steps
 
-- Step 4 (routers): `build_leaderboard` raises `ValueError` when
-  `requesting_guest_id` is given but not found among `guests`, or not
-  present in `logged_in_guest_ids`. The router must catch this and redirect
-  to login rather than letting it surface as a 500 — a guest should never
-  see an error page mid-event.
-- Step 3 (`bets.py`): `fetch_bet_by_client_bet_id` is the natural idempotency
-  pre-check, but a pre-check-then-write is technically a TOCTOU race — two
-  requests with the same `client_bet_id` could both pass the check before
-  either writes. Harmless under the single-uvicorn-worker deployment target
-  here, and `place_or_replace_bet` rolls back cleanly on the resulting
-  `client_bet_id` UNIQUE violation, but `bets.py` should treat that
-  `IntegrityError` as the authoritative idempotency signal rather than
-  relying on the pre-check alone.
-- Step 4 (routers): bet endpoints must catch `(races.RaceError, bets.BetError)`
-  together — `place_bet` can now raise from either hierarchy (see
-  `RaceNotFoundError` reuse above). The guest-facing message is the same
-  for both ("betting is closed" + resync) even though the internal
-  exception differs; don't let that similarity erase the distinction in
-  logs.
-- Step 4 (routers/templates): render `BetOutcome.horse_number`, never the
-  horse the guest's request submitted — on the idempotent path they can
-  differ (see the stored-row decision above).
-- Step 4 (login/claim check): test `device_token`, not `claimed_at`, for
-  "is this device logged in." The two now mean different things:
-  `claimed_at` means "participating" (may be set by `operator_set_bet` for
-  a guest who never touched a phone), `device_token` means "this specific
-  device is the one that claimed the username."
-- Step 4 (or any future code composing `db.place_or_replace_bet(conn=...)`
-  under a shared `db.transaction()`): never catch `sqlite3.IntegrityError`
-  inline and try to continue — once a statement inside an explicit SQLite
-  transaction fails, the whole transaction is aborted, so there is no
-  catch-and-still-commit recovery. Only the standalone form
-  (`conn=None`, which owns and has already rolled back its own
-  transaction by the time the exception surfaces) may catch
-  `IntegrityError` and recover by re-reading, as `bets.place_bet` does.
-  `bets.operator_set_bet` deliberately does not catch it, for exactly this
-  reason — see its docstring and `db.place_or_replace_bet`'s.
+- Step 4b (operator panel) / Step 5 (SSE): at 75 guests polling `GET
+  /state` every 3s, each request opens roughly six separate SQLite
+  connections (`apply_auto_lock`'s read, `current_state`'s four reads,
+  `get_live_bet`). Fine at this scale — this is a measured decision, not an
+  unexamined one — and Step 5's SSE removes most of this polling entirely,
+  but don't scale the polling interval down without re-checking it.
+- Step 4b: every route handler in `app/routers/guest.py` is a plain `def`,
+  not `async def`, because `app.db` is blocking stdlib sqlite3 and FastAPI
+  runs sync handlers in a threadpool — an `async def` handler calling `db.*`
+  directly would block the single event loop for every other guest. Step 4b
+  must follow the same convention. Step 5's SSE endpoint is the one
+  legitimate `async def` in the app, and it must not do blocking DB work
+  inline (push pre-computed state instead).
+- Step 4b: `app/config.py`'s `get_settings()` and `db.verify_ready()` are
+  both called, uncached, from `app/main.py`'s `lifespan` startup — not at
+  module import time. Any new startup check Step 4b/5/6 need should go in
+  that same `lifespan` function, not a new `@app.on_event` (deprecated) or
+  a module-level singleton, or per-test env isolation breaks.
+- Step 4b: `app/routers/guest.py`'s `_classify_state(state: RaceState) ->
+  str` is pure (no DB access) and is the one place that decides
+  waiting/open/locked/complete. The operator panel's own render states are
+  a different decision (it needs to show scratch checkboxes, who-hasn't-bet,
+  etc.) and should get its own equivalent function rather than reusing or
+  branching on this one.
+- Step 5: HTMX is vendored at `app/static/htmx.min.js` (pinned 1.9.12), not
+  loaded from a CDN — the design doc's stated most-likely failure mode is
+  the venue network, so nothing on the guest's critical path should depend
+  on an external host. Keep this rule for anything else Step 5 would
+  otherwise reach for from a CDN.
