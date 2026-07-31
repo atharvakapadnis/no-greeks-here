@@ -1,5 +1,5 @@
 .claude/settings.local.json
-.venv/
+venv/
 __pycache__/
 *.py[cod]
 .env

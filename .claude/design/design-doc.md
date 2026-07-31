@@ -108,9 +108,7 @@ a malformed five-element example; that has been fixed. If a future
 session believes this section is inconsistent, the example above is
 correct and the label "dense" is correct.
 
-Leaderboard shows the top 10 **people**, but never splits a tie: if the tenth
-position contains four people, show all of them and run to 13 rows. The
-requesting guest's own row is always pinned at the bottom regardless of rank.
+The requesting guest's own row is always pinned at the bottom regardless of rank.
 
 Visible rows are the top 10 people, extended to include everyone sharing
 the rank at the boundary. Capped at `max_rows` (default 25), because
