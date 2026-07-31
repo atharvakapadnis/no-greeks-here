@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+jinja2
+python-multipart
+itsdangerous
+boto3
+pydantic-settings
+pytest
+httpx

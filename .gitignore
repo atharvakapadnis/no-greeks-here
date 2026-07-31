@@ -1,1 +1,11 @@
-.claude/
+.claude/settings.local.json
+.venv/
+__pycache__/
+*.py[cod]
+.env
+data/*
+!data/.gitkeep
+*.db
+*.db-wal
+*.db-shm
+.DS_Store
