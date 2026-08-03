@@ -46,6 +46,12 @@ h1, h2 {
   color: var(--color-text);
 }
 
+.banner--settle {
+  background: var(--color-surface-alt);
+  color: var(--color-text);
+  border: 1px solid var(--color-accent);
+}
+
 .btn {
   display: inline-block;
   min-height: 48px;
@@ -131,6 +137,14 @@ h1, h2 {
   background: var(--color-accent);
   color: var(--color-accent-text);
   border-color: var(--color-accent);
+}
+
+.horse-btn.htmx-request {
+  opacity: 0.55;
+}
+
+.horse-btn.htmx-request::after {
+  content: "…";
 }
 
 .horse-btn--scratched {
@@ -231,5 +245,9 @@ h1, h2 {
 
 .tabbar__tab:hover,
 .tabbar__tab:active {
+  color: var(--color-accent);
+}
+
+.tabbar__tab--active {
   color: var(--color-accent);
 }

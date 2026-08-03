@@ -82,17 +82,23 @@ writers on the same row, so of two threads racing this for the same
 
 ## `app/routers/guest.py`
 
-Seven routes: `GET /`, `GET /login`, `POST /login`, `GET /bet`,
-`POST /bet`, `GET /leaderboard`, `GET /state`.
+Eight routes: `GET /`, `GET /login`, `POST /login`, `GET /bet`,
+`POST /bet`, `GET /leaderboard`, `GET /leaderboard/table`, `GET /state`.
 
 `POST /login`'s claim flow matches the design doc's first-device-wins
 sequence exactly: unknown username -> organiser message; unclaimed guest ->
 `claim_guest_device`, and on success set cookie + redirect (on losing the
 race, re-fetch and fall through); claimed guest whose cookie's unsigned
 token matches -> redirect (already logged in); otherwise -> "already
-claimed" message. `race_number` for `POST /bet` is never read from the
-client — it's `races.current_race_number()`, computed server-side, so a
-stale form can't target the wrong race.
+claimed" message. The target race for `POST /bet` is never read from the
+client — it's `races.current_state(now).race_number`, computed once per
+request and passed into `_bet_screen_context` so the whole request (the
+`place_bet` call and the closed-event check via `state.event_complete`)
+shares one snapshot. (The Step 4a fix-up pass corrected this from
+`races.current_race_number()`, which returns `None` once every race is
+`SETTLED` while `current_state` falls back to the final race — two
+different notions of "the current race" inside one request. See "Step 4a
+fix-up pass" below.)
 
 **`_classify_state(state: races.RaceState) -> str`** is a small pure
 function (no DB access) holding the four-way render-state decision,
@@ -160,8 +166,16 @@ the critical path would leave every guest with a dead page if that CDN is
 slow or blocked.
 
 The horse grid uses `hx-vals='js:{"horse_number": N, "client_bet_id":
-crypto.randomUUID()}'` so each tap generates its own idempotency key
-client-side with no custom JS file needed. `guest/bet.html`'s poll
+newBetId()}'` so each tap generates its own idempotency key client-side.
+`newBetId()` (in `app/static/app.js`, added in the Step 4a fix-up pass) is
+not a one-liner calling `crypto.randomUUID()` directly, and must stay that
+way: `crypto.randomUUID` only exists in a secure context (HTTPS or
+localhost), and the venue LAN fallback in the design doc — a laptop serving
+plain HTTP over the venue network — is an insecure context by definition.
+Without the fallback, every tap throws and no bet is placed on that path.
+`newBetId()` falls back to a timestamp + random-suffix string, which is
+sufficient because `client_bet_id` is an idempotency key, not a security
+token — uniqueness per tap is all that's required. `guest/bet.html`'s poll
 container:
 
 ```html
@@ -191,21 +205,88 @@ a summary, second run against the same `DATABASE_PATH` refuses cleanly.
 
 ## Test coverage summary
 
-230 tests passing total: 187 from Steps 1-3, plus 11 naive-datetime guard
-tests (`test_races.py`/`test_bets.py`), 10 in the new `test_auth.py`, and
-22 in the new `test_guest_routes.py`. Six of the 22 are pure
-`_classify_state` unit tests (no DB, no HTTP) pinning down the auto-lock
-edge cases directly.
+242 tests passing total. At initial Step 4a completion: 230 (187 from
+Steps 1-3, plus 11 naive-datetime guard tests in `test_races.py`/
+`test_bets.py`, 10 in `test_auth.py`, and 22 in `test_guest_routes.py`, six
+of which are pure `_classify_state` unit tests with no DB/HTTP). The Step 4a
+fix-up pass (see that section below) added 12 more to `test_guest_routes.py`
+covering the `newBetId()` fallback, the pending-tap attributes, the
+countdown's `data-deadline-seconds` attribute, `POST /bet` after event
+completion, the active-tab indicator, a rejected bet not rendering as
+selected, and the leaderboard's polling route and settle-banner variants
+(with a bet, without, before any race settles, and voided by a mid-race
+scratch).
 
 Notable cases beyond the obvious happy paths: concurrent claim via two real
 `threading.Thread`s (not mocked) resolves to exactly one winner; a tampered
 cookie, a well-signed cookie for a token that no longer exists, and no
-cookie at all all redirect to `/login` with no 500; a stale
-`client_bet_id` retry for a since-superseded horse renders the *stored*
-horse, not the one the retry submitted; a guest whose `device_token`
+cookie at all all redirect to `/login` with no 500; a stale `client_bet_id`
+retry for a since-superseded horse renders the guest's *current live* horse
+(read fresh via `get_live_bet`), never the one the retry submitted — this is
+a general rule, not a one-off: the render path never reads `BetOutcome` or
+the request's `horse_number` at all, so a rejected bet (e.g. a scratched
+horse) doesn't render as selected either; a guest whose `device_token`
 resolves but whose `claimed_at` is `NULL` (a deliberately corrupted test
 state) hits `build_leaderboard`'s `ValueError` and redirects rather than
 500ing; the leaderboard truncation banner renders under a 30-guest tie.
+
+## Step 4a fix-up pass
+
+A review against the design doc plus a dress-rehearsal walkthrough (phones
+on the venue's plain-HTTP LAN) found eight gaps, fixed in one pass before
+sign-off:
+
+- **`newBetId()` fallback for `crypto.randomUUID()`** — see the HTMX/CSS
+  section above. This was the one release-blocking item: it broke every tap
+  on the venue LAN.
+- **Pending state on tap**: horse buttons now carry `hx-indicator="this"`
+  and `hx-disabled-elt="this"`; `.horse-btn.htmx-request` in `app.css` dims
+  the button and appends "…" while the request is in flight. No optimistic
+  highlight — `horse-btn--selected` still comes only from the server-
+  rendered `current_horse`.
+- **Client-side countdown tick**: `open.html`'s countdown paragraph carries
+  `data-deadline-seconds`; `app.js`'s `tickCountdown()` decrements it once a
+  second and shows "Betting closed" at zero. Purely a display refinement
+  between polls — it never changes bet state client-side, and the next poll
+  (or, later, SSE message) remains authoritative on when betting actually
+  closes. Two things to preserve if this is touched again: the
+  `htmx:afterSwap` listener must be registered inside the
+  `DOMContentLoaded` handler (registering it at parse time throws, since
+  `document.body` doesn't exist yet when the script loads from `<head>`,
+  and silently kills the countdown after the first swap); and
+  `tickCountdown` must check `evt.target.id === "bet-state"` before doing
+  anything, since `GET /leaderboard/table`'s poll (below) also fires
+  `htmx:afterSwap` on the same page and would otherwise stop the bet
+  screen's countdown while a guest is on the leaderboard tab.
+- **Leaderboard polling + settle banner**: `guest/leaderboard.html` now
+  wraps the table in the same `hx-trigger="every 3s"` poll pattern as
+  `guest/bet.html`, backed by a new `GET /leaderboard/table` returning the
+  extracted `guest/partials/leaderboard_table.html`. Both `GET /leaderboard`
+  routes share one `_leaderboard_context(guest_row)` choke point (mirrors
+  `_bet_screen_context`'s role for the bet screen). Above the table, a
+  banner shows the most recently settled race's result and this guest's
+  points from it (`Race {N}: 1st #a, 2nd #b, 3rd #c — you scored {p}
+  points`, or "you didn't bet"; nothing before any race settles). The
+  original Step 4a prompt said "rank, name, total, nothing else" for the
+  leaderboard tab, which contradicted the design doc's explicit settle-
+  banner requirement — the design doc wins. The guest's horse for the
+  banner is read via `db.fetch_bets_for_race(settled_race)`, not
+  `get_live_bet`/`get_live_bets` — scoped to one race since this route is
+  polled every 3s. A guest whose bet was voided by a mid-race scratch (see
+  `races.set_scratched`) has no live bet in that race and correctly reads as
+  "didn't bet" scoring 0, the same way the locked/complete screens treat
+  that guest — not a bug, a deliberate case covered by
+  `test_leaderboard_banner_shows_didnt_bet_when_bet_voided_by_scratch`.
+- **`POST /bet` now uses `races.current_state(now)`** instead of
+  `races.current_race_number()` — see the routes section above.
+- **Carry-forward wording correction** — see "Notable cases" above and the
+  tracker's "Step 3's open questions" section.
+- **Viewport**: `base.html`'s `maximum-scale=1` was removed; pinch-zoom is
+  no longer blocked.
+- **Active tab indicator**: `get_bet`/`get_leaderboard` pass
+  `active_tab` ("bet"/"leaderboard") into their template context;
+  `base.html` marks the matching `<a>` with `aria-current="page"` and
+  `.tabbar__tab--active` (`var(--color-accent)`, in `app.css`).
 
 ## Carry-forward notes for Step 4b / 5
 

@@ -1,3 +1,4 @@
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -45,6 +46,14 @@ def _login(client, username: str, display_name: str = "Guest") -> int:
     guest_id = db.insert_guest(username, display_name, _now().isoformat())
     client.post("/login", data={"username": username})
     return guest_id
+
+
+def _button_html_for_horse(html: str, number: int) -> str:
+    marker = f'<span class="horse-btn__number">{number}</span>'
+    idx = html.index(marker)
+    start = html.rfind("<button", 0, idx)
+    end = html.index("</button>", idx)
+    return html[start:end]
 
 
 # --- _classify_state: pure decision logic -------------------------------------
@@ -249,7 +258,7 @@ def test_repeated_client_bet_id_creates_one_bet_shows_one_horse(client):
     assert count == 1
 
 
-def test_stale_client_bet_id_retry_renders_stored_horse_not_submitted(client):
+def test_stale_client_bet_id_retry_renders_current_live_horse_not_submitted(client):
     guest_id = _login(client, "jdoe")
     races.open_race(1, _now())
     old_id = _uid()
@@ -257,12 +266,29 @@ def test_stale_client_bet_id_retry_renders_stored_horse_not_submitted(client):
     bets.place_bet(guest_id, 1, 5, _uid(), _now())  # newer tap on #5 supersedes it
 
     # A "retry" of the stale request for horse #2 arrives late, still
-    # carrying old_id and still submitting horse_number=2.
+    # carrying old_id and still submitting horse_number=2. The bet screen
+    # always renders the guest's current live bet (get_live_bet), never the
+    # horse_number the request submitted, so the reply must still show #5
+    # selected — a stale retry must never make the display regress.
     response = client.post("/bet", data={"horse_number": 2, "client_bet_id": old_id})
 
     assert response.status_code == 200
-    # Must reflect the stored (superseded) row's horse, #2 — not re-select #5.
-    assert bets.get_live_bet(guest_id, 1) == 5
+    assert "horse-btn--selected" in _button_html_for_horse(response.text, 5)
+    assert "horse-btn--selected" not in _button_html_for_horse(response.text, 2)
+
+
+def test_rejected_bet_does_not_render_horse_as_selected(client):
+    guest_id = _login(client, "jdoe")
+    races.open_race(1, _now())
+    bets.place_bet(guest_id, 1, 3, _uid(), _now())
+    races.set_scratched(1, 2, True, _now())
+
+    response = client.post("/bet", data={"horse_number": 2, "client_bet_id": _uid()})
+
+    assert response.status_code == 200
+    assert "isn&#39;t running" in response.text or "isn't running" in response.text
+    assert "horse-btn--selected" in _button_html_for_horse(response.text, 3)
+    assert "horse-btn--selected" not in _button_html_for_horse(response.text, 2)
 
 
 def test_betting_scratched_horse_shows_message_and_rerenders(client):
@@ -285,6 +311,80 @@ def test_betting_locked_race_shows_betting_closed_message(client):
 
     assert response.status_code == 200
     assert "Betting is closed" in response.text
+
+
+def test_betting_after_event_complete_shows_betting_closed_message(client):
+    guest_id = _login(client, "jdoe")
+    for n in (1, 2, 3):
+        races.open_race(n, _now())
+        bets.place_bet(guest_id, n, 1, _uid(), _now())
+        races.lock_race(n, _now())
+        races.settle_race(n, 1, 2, 3, _now())
+
+    response = client.post("/bet", data={"horse_number": 1, "client_bet_id": _uid()})
+
+    assert response.status_code == 200
+    assert "Betting is closed" in response.text
+
+
+# --- item 1/2/3: insecure-context bet id, pending state, countdown -------------
+
+
+def test_open_state_uses_newbetid_not_crypto_randomuuid(client):
+    _login(client, "jdoe")
+    races.open_race(1, _now())
+
+    response = client.get("/bet")
+
+    assert response.status_code == 200
+    assert "newBetId()" in response.text
+    assert "crypto.randomUUID" not in response.text
+
+
+def test_open_state_horse_buttons_have_pending_state_attributes(client):
+    _login(client, "jdoe")
+    races.open_race(1, _now())
+
+    response = client.get("/bet")
+
+    assert response.status_code == 200
+    assert 'hx-indicator="this"' in response.text
+    assert 'hx-disabled-elt="this"' in response.text
+
+
+def test_open_state_with_auto_lock_renders_deadline_seconds_attribute(client):
+    _login(client, "jdoe")
+    races.open_race(1, _now(), auto_lock_seconds=120)
+
+    response = client.get("/bet")
+
+    assert response.status_code == 200
+    match = re.search(r'data-deadline-seconds="(\d+)"', response.text)
+    assert match is not None
+    assert int(match.group(1)) <= 120
+
+
+# --- item 7: active tab indicator -----------------------------------------------
+
+
+def test_bet_tab_marked_active_on_bet_page(client):
+    _login(client, "jdoe")
+    races.open_race(1, _now())
+
+    response = client.get("/bet")
+
+    assert response.status_code == 200
+    assert "tabbar__tab--active" in response.text
+    assert 'aria-current="page"' in response.text
+
+
+def test_leaderboard_tab_marked_active_on_leaderboard_page(client):
+    _login(client, "jdoe")
+
+    response = client.get("/leaderboard")
+
+    assert response.status_code == 200
+    assert "tabbar__tab--active" in response.text
 
 
 # --- leaderboard ---------------------------------------------------------------
@@ -316,3 +416,68 @@ def test_leaderboard_guest_not_logged_in_redirects_not_500(client):
 
     assert response.status_code == 303
     assert response.headers["location"] == "/login"
+
+
+def test_leaderboard_table_route_returns_partial(client):
+    _login(client, "jdoe")
+
+    response = client.get("/leaderboard/table")
+
+    assert response.status_code == 200
+    assert "leaderboard__table" in response.text
+    assert "<html" not in response.text
+
+
+def test_leaderboard_banner_before_any_race_settled_shows_nothing(client):
+    _login(client, "jdoe")
+    races.open_race(1, _now())
+
+    response = client.get("/leaderboard")
+
+    assert response.status_code == 200
+    assert "banner--settle" not in response.text
+
+
+def test_leaderboard_banner_shows_result_and_points_when_guest_bet(client):
+    guest_id = _login(client, "jdoe")
+    races.open_race(1, _now())
+    bets.place_bet(guest_id, 1, 2, _uid(), _now())
+    races.lock_race(1, _now())
+    races.settle_race(1, 2, 5, 6, _now())
+
+    response = client.get("/leaderboard")
+
+    assert response.status_code == 200
+    assert "Race 1: 1st #2, 2nd #5, 3rd #6" in response.text
+    assert "you scored 3 point" in response.text
+
+
+def test_leaderboard_banner_shows_didnt_bet_variant(client):
+    _login(client, "jdoe")
+    races.open_race(1, _now())
+    races.lock_race(1, _now())
+    races.settle_race(1, 2, 5, 6, _now())
+
+    response = client.get("/leaderboard")
+
+    assert response.status_code == 200
+    assert "you didn&#39;t bet" in response.text or "you didn't bet" in response.text
+
+
+def test_leaderboard_banner_shows_didnt_bet_when_bet_voided_by_scratch(client):
+    # A guest who bet on a horse that was later scratched mid-race has no
+    # live bet left (set_scratched voids it with no replacement) — the
+    # banner must read this as "didn't bet" and 0 points, not silently
+    # collapse into the "bet but scored 0" case.
+    guest_id = _login(client, "jdoe")
+    races.open_race(1, _now())
+    bets.place_bet(guest_id, 1, 2, _uid(), _now())
+    races.set_scratched(1, 2, True, _now())
+    races.lock_race(1, _now())
+    races.settle_race(1, 3, 4, 5, _now())
+
+    response = client.get("/leaderboard")
+
+    assert response.status_code == 200
+    assert "you didn&#39;t bet" in response.text or "you didn't bet" in response.text
+    assert "you scored" not in response.text

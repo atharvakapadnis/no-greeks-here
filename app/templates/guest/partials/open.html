@@ -4,7 +4,7 @@
 <div class="state state--open">
   <h2 class="state__title">Race {{ race_number }}</h2>
   {% if seconds_to_auto_lock is not none %}
-  <p class="countdown">Closes in {{ seconds_to_auto_lock }}s</p>
+  <p class="countdown" data-deadline-seconds="{{ seconds_to_auto_lock }}">Closes in {{ seconds_to_auto_lock }}s</p>
   {% endif %}
   <div class="horse-grid">
     {% for horse in horses %}
@@ -15,9 +15,11 @@
       disabled aria-disabled="true"
       {% else %}
       hx-post="/bet"
-      hx-vals='js:{"horse_number": {{ horse.number }}, "client_bet_id": crypto.randomUUID()}'
+      hx-vals='js:{"horse_number": {{ horse.number }}, "client_bet_id": newBetId()}'
       hx-target="#bet-state"
       hx-swap="innerHTML"
+      hx-indicator="this"
+      hx-disabled-elt="this"
       {% endif %}
     >
       <span class="horse-btn__number">{{ horse.number }}</span>

@@ -16,10 +16,15 @@ Status against `@.claude/design/design-doc.md`, updated after each session.
       where correctness lives. Completed 2026-07-31. 104 tests in
       `test_races.py` + `test_bets.py` (187 total passing). See
       `@.claude/implementation/003-race-state-and-bets.md`.
-- [x] 4a. Guest-facing routers and templates. Completed 2026-07-31. 32 new
-      tests (`test_auth.py`, `test_guest_routes.py`) plus 11 naive-datetime
-      guard tests added to `test_races.py`/`test_bets.py` — 230 total
-      passing. See `@.claude/implementation/004-guest-web-layer.md`.
+- [x] 4a. Guest-facing routers and templates. Completed 2026-07-31, fix-up
+      pass 2026-07-31 (crypto.randomUUID LAN fallback, pending-tap state,
+      countdown tick, leaderboard polling + settle banner, `POST /bet`
+      current_state unification, corrected render-rule wording, active tab
+      indicator — see "Step 4a fix-up pass" in
+      `@.claude/implementation/004-guest-web-layer.md`). 32 new tests
+      (`test_auth.py`, `test_guest_routes.py`) plus 11 naive-datetime guard
+      tests at initial completion, plus 12 more in the fix-up pass — 242
+      total passing.
 - [ ] 4b. Operator-facing routers and templates: race control panel
       (open/lock/settle/scratch), results entry, add guest, unlock device.
 - [ ] 5. SSE and client resilience in `static/app.js`.
@@ -106,11 +111,18 @@ Status against `@.claude/design/design-doc.md`, updated after each session.
 
 All five of Step 3's carry-forward notes (leaderboard `ValueError` ->
 redirect, catching `races.RaceError`/`bets.BetError` together, rendering
-`BetOutcome.horse_number` not the submitted horse, `device_token`-not-
+the guest's current live bet not the submitted horse, `device_token`-not-
 `claimed_at` for login state, never catching `IntegrityError` under a
 shared `conn`) were implemented exactly as specified in
 `app/routers/guest.py`. See
 `@.claude/implementation/004-guest-web-layer.md` for where each landed.
+The third of these was worded imprecisely in the original carry-forward note
+("render `BetOutcome.horse_number`, never the submitted horse") and was
+corrected in the Step 4a fix-up pass: `BetOutcome` is used for the write
+path only (idempotency dedup inside `place_bet`); the render path
+(`_bet_screen_context`) always renders the guest's current live bet via
+`bets.get_live_bet`, and never reads `BetOutcome` or the submitted
+`horse_number` at all.
 
 ## Open questions for later steps
 

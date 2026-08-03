@@ -66,14 +66,28 @@ def _classify_state(state: races.RaceState) -> str:
 
 
 def _bet_screen_context(
-    guest_row: sqlite3.Row, now: datetime, error_message: str | None = None
+    guest_row: sqlite3.Row,
+    now: datetime,
+    error_message: str | None = None,
+    state: races.RaceState | None = None,
 ) -> tuple[str, dict]:
     """The single choke point for GET /bet, GET /state, and POST /bet's
     response. Applies the auto-lock guard, reads current_state, classifies
     it via _classify_state, and builds that state's template context.
+
+    state, if given, lets POST /bet reuse the snapshot it already took
+    before calling place_bet — safe because place_bet only ever writes the
+    bet table, never race/race_entries/horses. current_horse/guest_horse
+    below are always re-read fresh via get_live_bet regardless of whether
+    state was reused, which is what keeps a just-placed bet correct. The one
+    field that would be stale under reuse is state.live_bet_count (one
+    write behind for the guest's own race) — harmless today since no
+    context dict below surfaces it, but keep it that way, or refresh state
+    before using it.
     """
-    races.apply_auto_lock(now)
-    state = races.current_state(now)
+    if state is None:
+        races.apply_auto_lock(now)
+        state = races.current_state(now)
     guest_id = guest_row["id"]
     state_name = _classify_state(state)
 
@@ -182,6 +196,7 @@ def post_login(request: Request, username: str = Form(...)):
 def get_bet(request: Request, guest: sqlite3.Row = Depends(require_guest)):
     state_name, context = _bet_screen_context(guest, _now())
     context["state_name"] = state_name
+    context["active_tab"] = "bet"
     return templates.TemplateResponse(request, "guest/bet.html", context)
 
 
@@ -200,16 +215,20 @@ def post_bet(
 ):
     now = _now()
     races.apply_auto_lock(now)
-    race_number = races.current_race_number()
+    state = races.current_state(now)
     error_message = None
 
-    if race_number is None:
+    if state.event_complete:
         logger.info("bet attempt after event complete, guest_id=%s", guest["id"])
         error_message = "Betting is closed"
     else:
         try:
-            bets.place_bet(guest["id"], race_number, horse_number, client_bet_id, now)
+            bets.place_bet(guest["id"], state.race_number, horse_number, client_bet_id, now)
         except (races.RaceNotFoundError, bets.BettingClosedError) as exc:
+            # place_bet independently re-validates race/auto-lock state at
+            # write time, so this is a genuine TOCTOU race — an operator
+            # lock/settle action landing in the gap between the current_state
+            # snapshot above and place_bet's write — not dead code.
             logger.info("betting closed for guest_id=%s: %s", guest["id"], exc)
             error_message = "Betting is closed"
         except bets.HorseNotInRaceError as exc:
@@ -219,24 +238,75 @@ def post_bet(
             logger.warning("guest login problem placing bet: %s", exc)
             return RedirectResponse("/login", status_code=303)
 
-    state_name, context = _bet_screen_context(guest, now, error_message=error_message)
+    state_name, context = _bet_screen_context(guest, now, error_message=error_message, state=state)
     return templates.TemplateResponse(request, f"guest/partials/{state_name}.html", context)
 
 
-@router.get("/leaderboard")
-def get_leaderboard(request: Request, guest: sqlite3.Row = Depends(require_guest)):
+def _leaderboard_context(guest_row: sqlite3.Row) -> dict | None:
+    """Single choke point for GET /leaderboard and GET /leaderboard/table.
+    Returns None on build_leaderboard's ValueError — callers redirect to
+    /login, matching _bet_screen_context's error-handling shape.
+
+    Also builds the settle banner: the most recently settled race's result
+    plus this guest's points from it. None until any race has settled.
+    """
+    settled = db.get_settled_results()
     try:
         board = scoring.build_leaderboard(
             db.get_guests(),
             db.get_logged_in_guest_ids(),
             db.get_live_bets(),
-            db.get_settled_results(),
-            requesting_guest_id=guest["id"],
+            settled,
+            requesting_guest_id=guest_row["id"],
         )
     except ValueError as exc:
-        logger.warning("leaderboard lookup failed for guest_id=%s: %s", guest["id"], exc)
-        return RedirectResponse("/login", status_code=303)
+        logger.warning("leaderboard lookup failed for guest_id=%s: %s", guest_row["id"], exc)
+        return None
 
-    return templates.TemplateResponse(
-        request, "guest/leaderboard.html", {"guest": guest, "board": board}
-    )
+    settled_race = max(settled) if settled else None
+    settled_result = settled.get(settled_race) if settled_race is not None else None
+    settled_guest_horse = None
+    settled_guest_points = None
+    if settled_result is not None:
+        # fetch_bets_for_race, not get_live_bets: scoped to one race so the
+        # scan stays small on a route polled every 3s. A horse scratched
+        # mid-race voids every live bet on it with no replacement (see
+        # races.set_scratched), so a guest whose horse was scratched has no
+        # live bet here — correctly reads as "didn't bet" and scores 0,
+        # consistent with how the locked/complete screens treat the same
+        # guest.
+        settled_guest_horse = next(
+            (
+                row["horse_number"]
+                for row in db.fetch_bets_for_race(settled_race)
+                if row["guest_id"] == guest_row["id"]
+            ),
+            None,
+        )
+        settled_guest_points = scoring.points_for_bet(settled_guest_horse, settled_result)
+
+    return {
+        "guest": guest_row,
+        "board": board,
+        "settled_race": settled_race,
+        "settled_result": settled_result,
+        "settled_guest_horse": settled_guest_horse,
+        "settled_guest_points": settled_guest_points,
+    }
+
+
+@router.get("/leaderboard")
+def get_leaderboard(request: Request, guest: sqlite3.Row = Depends(require_guest)):
+    context = _leaderboard_context(guest)
+    if context is None:
+        return RedirectResponse("/login", status_code=303)
+    context["active_tab"] = "leaderboard"
+    return templates.TemplateResponse(request, "guest/leaderboard.html", context)
+
+
+@router.get("/leaderboard/table")
+def get_leaderboard_table(request: Request, guest: sqlite3.Row = Depends(require_guest)):
+    context = _leaderboard_context(guest)
+    if context is None:
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(request, "guest/partials/leaderboard_table.html", context)
