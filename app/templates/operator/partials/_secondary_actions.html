@@ -4,27 +4,70 @@
     <form method="post" action="/operator/guest/add">
       <label class="login__label" for="add-guest-name">Name</label>
       <input class="login__input" type="text" id="add-guest-name" name="display_name" required>
-      <button class="btn" type="submit">Add guest</button>
+      <button class="btn btn--secondary" type="submit">Add guest</button>
     </form>
   </details>
 
   <details>
     <summary>Unlock a device</summary>
     <form method="post" action="/operator/guest/unlock">
-      <label class="login__label" for="unlock-guest-id">Guest ID</label>
-      <input class="login__input" type="number" id="unlock-guest-id" name="guest_id" required>
-      <button class="btn" type="submit">Unlock</button>
+      <label class="login__label" for="unlock-username">Guest username</label>
+      <input
+        class="login__input"
+        type="text"
+        id="unlock-username"
+        name="username"
+        list="unlock-username-list"
+        autocomplete="off"
+        placeholder="Start typing a username"
+        required
+      >
+      <datalist id="unlock-username-list">
+        {% for g in unlock_guests %}
+        <option value="{{ g.username }}">{{ g.display_name }}</option>
+        {% endfor %}
+      </datalist>
+      <button class="btn btn--secondary" type="submit">Unlock</button>
     </form>
   </details>
 
   <details>
     <summary>Fix a bet</summary>
     <form method="post" action="/operator/bet/set">
-      <label class="login__label" for="fixbet-guest-id">Guest ID</label>
-      <input class="login__input" type="number" id="fixbet-guest-id" name="guest_id" required>
-      <label class="login__label" for="fixbet-horse-number">Horse number</label>
-      <input class="login__input" type="number" id="fixbet-horse-number" name="horse_number" required>
-      <button class="btn" type="submit">Set bet</button>
+      <label class="login__label" for="fixbet-username">Guest username</label>
+      <input
+        class="login__input"
+        type="text"
+        id="fixbet-username"
+        name="username"
+        list="fixbet-username-list"
+        autocomplete="off"
+        placeholder="Start typing a username"
+        required
+      >
+      <datalist id="fixbet-username-list">
+        {% for g in fixbet_guests %}
+        <option value="{{ g.username }}">{{ g.display_name }}</option>
+        {% endfor %}
+      </datalist>
+
+      <span class="login__label">Horse</span>
+      <div class="fixbet-horse-grid">
+        {% for horse in fixbet_horses %}
+        <label class="fixbet-horse-option{% if horse.scratched %} fixbet-horse-option--scratched{% endif %}">
+          <input
+            type="radio"
+            name="horse_number"
+            value="{{ horse.number }}"
+            {% if horse.scratched %}disabled{% endif %}
+            required
+          >
+          #{{ horse.number }}{% if horse.name %} {{ horse.name }}{% endif %}
+        </label>
+        {% endfor %}
+      </div>
+
+      <button class="btn btn--secondary" type="submit">Set bet</button>
     </form>
   </details>
 </section>

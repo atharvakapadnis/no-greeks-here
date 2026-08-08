@@ -209,10 +209,22 @@ def _flash_context(flash: dict | None) -> dict:
 def _panel_context(
     state: races.RaceState, view: str, now: datetime, flash: dict | None
 ) -> dict:
+    all_guest_rows = db.fetch_guests()
     context: dict = {
         "view": view,
         "state": state,
         "backup_status": _backup_status(),
+        # Secondary actions (Fix-a-bet / Unlock) render on every view, so
+        # their picker data is always computed, not just in per-view
+        # branches below.
+        "unlock_guests": [g for g in all_guest_rows if g["device_token"] is not None],
+        "fixbet_guests": all_guest_rows,
+        # Default: state.race_number IS the race operator_set_bet will act
+        # on (races.current_state(now), fresh, in the route) for every
+        # view except "settled" — overridden below, where state describes
+        # the just-settled PREVIOUS race via _effective_state's gap
+        # reconstruction.
+        "fixbet_horses": state.horses,
     }
     context.update(_flash_context(flash))
 
@@ -240,6 +252,7 @@ def _panel_context(
             _horses_for_race(next_race_number) if next_race is not None else []
         )
         context["auto_lock_choices"] = AUTO_LOCK_CHOICES
+        context["fixbet_horses"] = context["next_horses"]
 
     elif view == "complete":
         all_guests = db.get_guests()
@@ -472,9 +485,19 @@ def post_race_correct(
 def post_race_scratch(
     race_number: int = Form(...),
     horse_number: int = Form(...),
-    scratched: bool = Form(...),
+    scratched: bool = Form(False),
     _: None = Depends(require_operator),
 ):
+    """scratched posts the DESIRED state, not a client-computed opposite of
+    the current one: the checkbox is name="scratched" value="true", so a
+    checked box submits scratched=True and an unchecked box submits the
+    field not at all (defaulting to False here). This is deliberate — the
+    old hidden-inverse-field version had the client asserting what the
+    current state was, which Step 3 removed everywhere else, and it also
+    silently no-oped on a double submit in the same state (set_scratched
+    is a no-op when the flag already matches) while still looking like it
+    toggled.
+    """
     now = _now()
     races.apply_auto_lock(now)
     real = races.current_state(now)
@@ -511,27 +534,33 @@ def post_guest_add(
 
 @router.post("/operator/guest/unlock")
 def post_guest_unlock(
-    guest_id: int = Form(...), _: None = Depends(require_operator)
+    username: str = Form(...), _: None = Depends(require_operator)
 ):
-    guest = db.fetch_guest_by_id(guest_id)
+    """Takes a username, not a guest_id — an operator can read a username
+    off a guest's card mid-event, never their numeric id. Resolved here via
+    db.fetch_guest_by_username, one lookup before the existing clear."""
+    guest = db.fetch_guest_by_username(username)
     if guest is None:
         return _flash_redirect("guest_not_found")
-    db.clear_guest_device(guest_id)
+    db.clear_guest_device(guest["id"])
     return RedirectResponse("/operator", status_code=303)
 
 
 @router.post("/operator/bet/set")
 def post_bet_set(
-    guest_id: int = Form(...),
+    username: str = Form(...),
     horse_number: int = Form(...),
     _: None = Depends(require_operator),
 ):
+    guest = db.fetch_guest_by_username(username)
+    if guest is None:
+        return _flash_redirect("guest_not_found")
     now = _now()
     races.apply_auto_lock(now)
     real = races.current_state(now)
     try:
         bets.operator_set_bet(
-            guest_id, real.race_number, horse_number, actor="operator", now=now
+            guest["id"], real.race_number, horse_number, actor="operator", now=now
         )
     except races.RaceNotFoundError:
         return _flash_redirect("race_not_found")
@@ -540,6 +569,11 @@ def post_bet_set(
     except bets.HorseNotInRaceError:
         return _flash_redirect("bet_horse_not_in_race")
     except bets.GuestNotFoundError:
+        # Unreachable through this route in legitimate use — the lookup
+        # above already resolves username -> guest_id, so operator_set_bet
+        # can never see a guest_id that doesn't exist. Kept for the same
+        # documented-TOCTOU-branch reason as this file's other such
+        # except clauses (e.g. race/open's RaceNotFoundError).
         return _flash_redirect("guest_not_found")
     return RedirectResponse("/operator", status_code=303)
 

@@ -1,17 +1,19 @@
 {% extends "operator/base.html" %}
 {% block title %}Confirm{% endblock %}
 {% block content %}
-<h1 class="state__title">{{ verb }} race {{ race_number }}?</h1>
-<p class="state__body">
-  1st #{{ first }}, 2nd #{{ second }}, 3rd #{{ third }}. Scores will update.
-</p>
-<form method="post" action="{{ action }}">
-  <input type="hidden" name="race_number" value="{{ race_number }}">
-  <input type="hidden" name="first" value="{{ first }}">
-  <input type="hidden" name="second" value="{{ second }}">
-  <input type="hidden" name="third" value="{{ third }}">
-  <input type="hidden" name="confirmed" value="1">
-  <button class="btn btn--primary" type="submit">Confirm and {{ verb|lower }}</button>
-</form>
-<p><a href="/operator">Cancel</a></p>
+<div class="confirm-page">
+  <h1 class="state__title">{{ verb }} race {{ race_number }}?</h1>
+  <p class="state__body">
+    1st #{{ first }} &middot; 2nd #{{ second }} &middot; 3rd #{{ third }}. Scores will update for everyone.
+  </p>
+  <form method="post" action="{{ action }}">
+    <input type="hidden" name="race_number" value="{{ race_number }}">
+    <input type="hidden" name="first" value="{{ first }}">
+    <input type="hidden" name="second" value="{{ second }}">
+    <input type="hidden" name="third" value="{{ third }}">
+    <input type="hidden" name="confirmed" value="1">
+    <button class="btn btn--primary operator-primary-btn" type="submit">Confirm and {{ verb|lower }}</button>
+  </form>
+  <p><a href="/operator">Cancel</a></p>
+</div>
 {% endblock %}

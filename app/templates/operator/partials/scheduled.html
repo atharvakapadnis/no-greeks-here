@@ -1,4 +1,4 @@
-<h1 class="state__title">Race {{ state.race_number }} of {{ state.total_races }} hasn't started.</h1>
+<h1 class="state__title">Race {{ state.race_number }} of {{ state.total_races }} — ready to open.</h1>
 
 <form method="post" action="/operator/race/open">
   <input type="hidden" name="race_number" value="{{ state.race_number }}">
@@ -10,7 +10,7 @@
     </option>
     {% endfor %}
   </select>
-  <button class="btn btn--primary" type="submit">Open betting</button>
+  <button class="btn btn--primary operator-primary-btn" type="submit">Open betting</button>
 </form>
 
 {% with scratch_race_number=state.race_number, scratch_horses=state.horses, scratch_label=None %}

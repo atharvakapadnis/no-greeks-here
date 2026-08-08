@@ -25,17 +25,26 @@ Status against `@.claude/design/design-doc.md`, updated after each session.
       (`test_auth.py`, `test_guest_routes.py`) plus 11 naive-datetime guard
       tests at initial completion, plus 12 more in the fix-up pass — 242
       total passing.
-- [~] 4b. Operator-facing routers and templates: race control panel
+- [x] 4b. Operator-facing routers and templates: race control panel
       (open/lock/settle/scratch), results entry, add guest, unlock device.
       Python pass completed 2026-08-08: `app/routers/operator.py`,
       operator auth/rate-limit/flash in `app/auth.py`, two new `db.py`
       primitives, `scripts/import_guests.py`, functional (not yet
       polished) templates under `app/templates/operator/`. 70 new tests
       (`test_operator_auth.py`, `test_operator_routes.py`,
-      `test_import_guests.py`) — 312 total passing. Template pass
-      (per-view markup presence/absence assertions, the tap-to-select
-      results grid, visual polish) deliberately deferred to a later
-      session — see `@.claude/implementation/005-operator-panel.md`.
+      `test_import_guests.py`) — 312 total passing. See
+      `@.claude/implementation/005-operator-panel.md`. Template pass
+      completed 2026-08-08: tap-a-position/tap-a-horse results entry
+      (`app/static/app.js`'s `initResultsEntry()`), scratch checkboxes on
+      scheduled/open/settled posting their own desired state, per-view
+      layout (dominant primary action, muted secondary actions, bet-count
+      chips, add-guest callout, mid-dot confirm page), a username-based
+      guest picker for Fix-a-bet/Unlock (separate claimed-only vs.
+      all-guests lists), and `tests/test_operator_templates.py`'s
+      parametrized per-view action-form presence/absence table. 30 new
+      tests — 342 total passing. `scripts/operator_demo.py` added for
+      pre-event rehearsal. See
+      `@.claude/implementation/006-operator-panel-template-pass.md`.
 - [ ] 5. SSE and client resilience in `static/app.js`.
 - [ ] 6. Docker, Litestream, Lightsail. Then rehearse a restore twice before the
       event.
@@ -149,6 +158,21 @@ Status against `@.claude/design/design-doc.md`, updated after each session.
   stale tab from two races ago silently rewrite an old result. `_effective_
   state`'s reconstructed "settled" state must never be used for this
   check either (see its docstring).
+- Step 4b's template pass changed `POST /operator/guest/unlock` and
+  `POST /operator/bet/set` from a `guest_id: int` form field to
+  `username: str`, resolved server-side via `db.fetch_guest_by_username`
+  — a numeric guest ID was never something an operator could supply from
+  memory mid-event. Approved scope addition beyond the session's original
+  brief; see `@.claude/implementation/006-operator-panel-template-pass.md`.
+- `POST /operator/race/scratch`'s `scratched` field changed from
+  `Form(...)` (required, either `"true"` or `"false"`) to `Form(False)`
+  (optional, defaulting to unscratched). The scratch checkbox posts the
+  state the operator just expressed (checked -> `scratched=true`,
+  unchecked -> field omitted entirely), not a client-computed opposite of
+  the current state — the earlier hidden-inverse-field design was exactly
+  the "client asserts current server state" pattern Step 3 removed
+  everywhere else, and silently no-oped on a double submit in the same
+  state.
 
 ## Step 3's open questions, resolved in Step 4a
 

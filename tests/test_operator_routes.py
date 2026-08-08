@@ -7,6 +7,7 @@ deliberately NOT in this file yet — it follows in a later session once the
 full per-view templates exist.
 """
 
+import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -29,6 +30,19 @@ def _contains(text: str, phrase: str) -> bool:
     """Jinja2 autoescapes apostrophes to &#39; — check both forms so
     assertions don't depend on that escaping detail."""
     return phrase in text or phrase.replace("'", "&#39;") in text
+
+
+def _datalist_options(html: str, list_id: str) -> set[str]:
+    """Every <option value="..."> between <datalist id=list_id> and its
+    closing tag — used to check the unlock/fix-a-bet username pickers are
+    scoped to the right guest set."""
+    match = re.search(
+        r'<datalist id="' + re.escape(list_id) + r'">(.*?)</datalist>',
+        html,
+        re.DOTALL,
+    )
+    assert match is not None, f"no <datalist id={list_id!r}> found"
+    return set(re.findall(r'<option value="([^"]+)"', match.group(1)))
 
 
 @pytest.fixture
@@ -394,6 +408,79 @@ def test_scratch_horse_from_settled_view_marks_next_race_not_current(client):
     assert bool(race1_entries[4]["scratched"]) is False
 
 
+def test_scratch_checkbox_checks_unscratched_horse(client):
+    """The checkbox posts the DESIRED state (scratched=true when checked),
+    not a client-computed opposite of the current one."""
+    _login_operator(client)
+
+    client.post(
+        "/operator/race/scratch",
+        data={"race_number": 1, "horse_number": 2, "scratched": "true"},
+    )
+
+    entries = {e["horse_number"]: e for e in db.get_race_entries(1)}
+    assert bool(entries[2]["scratched"]) is True
+
+
+def test_scratch_checkbox_unchecks_scratched_horse(client):
+    """An unchecked box submits no `scratched` field at all — the route
+    must read that as False via Form(False), not require an explicit
+    'false' value."""
+    _login_operator(client)
+    client.post(
+        "/operator/race/scratch",
+        data={"race_number": 1, "horse_number": 2, "scratched": "true"},
+    )
+
+    response = client.post(
+        "/operator/race/scratch",
+        data={"race_number": 1, "horse_number": 2},  # no "scratched" field
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    entries = {e["horse_number"]: e for e in db.get_race_entries(1)}
+    assert bool(entries[2]["scratched"]) is False
+
+
+def test_scratch_same_state_twice_is_harmless_noop(client):
+    _login_operator(client)
+
+    first = client.post(
+        "/operator/race/scratch",
+        data={"race_number": 1, "horse_number": 2, "scratched": "true"},
+        follow_redirects=False,
+    )
+    second = client.post(
+        "/operator/race/scratch",
+        data={"race_number": 1, "horse_number": 2, "scratched": "true"},
+        follow_redirects=False,
+    )
+
+    assert first.status_code == 303
+    assert second.status_code == 303
+    entries = {e["horse_number"]: e for e in db.get_race_entries(1)}
+    assert bool(entries[2]["scratched"]) is True
+
+
+def test_scratch_from_open_view_voids_live_bets(client):
+    _login_operator(client)
+    guest_id = _add_guest("jdoe")
+    now = _now()
+    races.open_race(1, now)
+    bets.place_bet(guest_id, 1, 2, "cb-1", now)
+    assert bets.get_live_bet(guest_id, 1) == 2
+
+    response = client.post(
+        "/operator/race/scratch",
+        data={"race_number": 1, "horse_number": 2, "scratched": "true"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert bets.get_live_bet(guest_id, 1) is None
+
+
 def test_open_race_n_plus_1_from_settled_view_accepts_auto_lock(client):
     _login_operator(client)
     now = _now()
@@ -642,11 +729,11 @@ def test_scratch_invalid_horse_not_entered_message(client):
 
 def test_bet_set_betting_closed_message(client):
     _login_operator(client)
-    guest_id = _add_guest("jdoe")
+    _add_guest("jdoe")
 
     response = client.post(
         "/operator/bet/set",
-        data={"guest_id": guest_id, "horse_number": 1},
+        data={"username": "jdoe", "horse_number": 1},
         follow_redirects=True,
     )
 
@@ -655,12 +742,12 @@ def test_bet_set_betting_closed_message(client):
 
 def test_bet_set_horse_not_in_race_message(client):
     _login_operator(client)
-    guest_id = _add_guest("jdoe")
+    _add_guest("jdoe")
     races.open_race(1, _now())
 
     response = client.post(
         "/operator/bet/set",
-        data={"guest_id": guest_id, "horse_number": 99},
+        data={"username": "jdoe", "horse_number": 99},
         follow_redirects=True,
     )
 
@@ -673,7 +760,7 @@ def test_bet_set_guest_not_found_message(client):
 
     response = client.post(
         "/operator/bet/set",
-        data={"guest_id": 999, "horse_number": 1},
+        data={"username": "nosuchuser", "horse_number": 1},
         follow_redirects=True,
     )
 
@@ -691,7 +778,7 @@ def test_unlock_guest_clears_device_token_preserves_claimed_at(client):
     assert before["claimed_at"] is not None
 
     response = client.post(
-        "/operator/guest/unlock", data={"guest_id": guest_id}, follow_redirects=False
+        "/operator/guest/unlock", data={"username": "jdoe"}, follow_redirects=False
     )
 
     assert response.status_code == 303
@@ -704,7 +791,7 @@ def test_unlock_unknown_guest_shows_message(client):
     _login_operator(client)
 
     response = client.post(
-        "/operator/guest/unlock", data={"guest_id": 999}, follow_redirects=True
+        "/operator/guest/unlock", data={"username": "nosuchuser"}, follow_redirects=True
     )
 
     assert _contains(response.text.lower(), "doesn't exist")
@@ -773,7 +860,7 @@ def test_operator_set_bet_works_while_open(client):
 
     response = client.post(
         "/operator/bet/set",
-        data={"guest_id": guest_id, "horse_number": 2},
+        data={"username": "jdoe", "horse_number": 2},
         follow_redirects=False,
     )
 
@@ -790,7 +877,7 @@ def test_operator_set_bet_works_while_locked(client):
 
     response = client.post(
         "/operator/bet/set",
-        data={"guest_id": guest_id, "horse_number": 3},
+        data={"username": "jdoe", "horse_number": 3},
         follow_redirects=False,
     )
 
@@ -800,7 +887,7 @@ def test_operator_set_bet_works_while_locked(client):
 
 def test_operator_set_bet_rejected_on_settled(client):
     _login_operator(client)
-    guest_id = _add_guest("jdoe")
+    _add_guest("jdoe")
     now = _now()
     races.open_race(1, now)
     races.lock_race(1, now)
@@ -808,7 +895,7 @@ def test_operator_set_bet_rejected_on_settled(client):
 
     response = client.post(
         "/operator/bet/set",
-        data={"guest_id": guest_id, "horse_number": 4},
+        data={"username": "jdoe", "horse_number": 4},
         follow_redirects=True,
     )
 
@@ -820,7 +907,7 @@ def test_operator_set_bet_sets_claimed_at_if_null(client):
     guest_id = _add_guest("jdoe", claimed=False)
     races.open_race(1, _now())
 
-    client.post("/operator/bet/set", data={"guest_id": guest_id, "horse_number": 2})
+    client.post("/operator/bet/set", data={"username": "jdoe", "horse_number": 2})
 
     guest = db.fetch_guest_by_id(guest_id)
     assert guest["claimed_at"] is not None
@@ -833,7 +920,7 @@ def test_operator_set_bet_does_not_overwrite_existing_claimed_at(client):
     original_claimed_at = db.fetch_guest_by_id(guest_id)["claimed_at"]
     races.open_race(1, _now())
 
-    client.post("/operator/bet/set", data={"guest_id": guest_id, "horse_number": 2})
+    client.post("/operator/bet/set", data={"username": "jdoe", "horse_number": 2})
 
     assert db.fetch_guest_by_id(guest_id)["claimed_at"] == original_claimed_at
 
@@ -849,8 +936,73 @@ def test_who_hasnt_bet_excludes_unclaimed_guests(client):
 
     response = client.get("/operator")
 
-    assert "Jane Doe" in response.text
-    assert "Bob Smith" not in response.text
+    # Scoped to the who-hasn't-bet chip specifically, not the whole page —
+    # Bob Smith legitimately appears elsewhere now, in the Fix-a-bet
+    # username datalist (which deliberately includes unclaimed guests for
+    # the paper-fallback path).
+    assert '<span class="chip">Jane Doe</span>' in response.text
+    assert '<span class="chip">Bob Smith</span>' not in response.text
+
+
+# --- guest picker (fix-a-bet / unlock) --------------------------------------
+
+
+def test_unlock_picker_excludes_guest_without_device(client):
+    _login_operator(client)
+    _add_guest("jdoe", claimed=True)
+    _add_guest("bsmith", claimed=False)  # never claimed a device
+
+    response = client.get("/operator")
+
+    unlock_options = _datalist_options(response.text, "unlock-username-list")
+    assert "jdoe" in unlock_options
+    assert "bsmith" not in unlock_options
+
+
+def test_fixbet_picker_includes_unclaimed_guest(client):
+    _login_operator(client)
+    _add_guest("jdoe", claimed=True)
+    _add_guest("bsmith", claimed=False)
+
+    response = client.get("/operator")
+
+    fixbet_options = _datalist_options(response.text, "fixbet-username-list")
+    assert "jdoe" in fixbet_options
+    assert "bsmith" in fixbet_options  # the paper-fallback path needs this
+
+
+def test_fixbet_horses_use_next_race_on_settled_view(client):
+    """The settled view's `state` describes the just-settled PREVIOUS race
+    (_effective_state's gap reconstruction) — the race operator_set_bet
+    will actually act on is the next one, so the fix-a-bet horse picker
+    must show next_race's horses, not the just-settled race's."""
+    _login_operator(client)
+    now = _now()
+    races.open_race(1, now)
+    races.lock_race(1, now)
+    races.set_scratched(2, 3, True, now)  # scratch a horse in the NEXT race
+    races.settle_race(1, 1, 2, 3, now)
+
+    response = client.get("/operator")
+
+    # Scoped to the fixbet-horse-grid container specifically — the
+    # scratch-list section has its own hidden horse_number inputs for the
+    # same race, which a page-wide search would conflate with these.
+    grid_match = re.search(
+        r'<div class="fixbet-horse-grid">(.*?)</div>', response.text, re.DOTALL
+    )
+    assert grid_match is not None
+    grid_html = grid_match.group(1)
+
+    fixbet_horse_numbers = set(
+        int(n) for n in re.findall(r'name="horse_number"\s+value="(\d+)"', grid_html)
+    )
+    # race 2's full entry set (6 horses from initialised_db's default),
+    # not race 1's — and horse 3 is scratched there, so its <input> should
+    # carry disabled.
+    assert fixbet_horse_numbers == {1, 2, 3, 4, 5, 6}
+    scratched_input = re.search(r'value="3"[^>]*disabled', grid_html)
+    assert scratched_input is not None
 
 
 # --- export -----------------------------------------------------------------

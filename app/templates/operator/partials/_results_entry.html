@@ -1,20 +1,45 @@
-<section class="results-entry">
+<section class="results-entry" data-results-entry>
   <h2>Results</h2>
   <form method="post" action="{{ results_action }}">
     <input type="hidden" name="race_number" value="{{ state.race_number }}">
-    {% for label, field in (("1st", "first"), ("2nd", "second"), ("3rd", "third")) %}
-    <label class="login__label" for="results-{{ field }}">{{ label }}</label>
-    <select class="login__input" id="results-{{ field }}" name="{{ field }}" required>
-      <option value="" disabled {% if not results_prefill %}selected{% endif %}>Choose a horse</option>
-      {% for horse in state.horses %}
-      <option
-        value="{{ horse.number }}"
-        {% if horse.scratched %}disabled{% endif %}
-        {% if results_prefill and results_prefill[field] == horse.number %}selected{% endif %}
-      >#{{ horse.number }}{% if horse.name %} {{ horse.name }}{% endif %}{% if horse.scratched %} (scratched){% endif %}</option>
+    <input type="hidden" name="first" data-slot-input="first" value="{{ results_prefill.first if results_prefill else '' }}">
+    <input type="hidden" name="second" data-slot-input="second" value="{{ results_prefill.second if results_prefill else '' }}">
+    <input type="hidden" name="third" data-slot-input="third" value="{{ results_prefill.third if results_prefill else '' }}">
+
+    <div class="results-entry__slots">
+      {% for label, field in (("1st", "first"), ("2nd", "second"), ("3rd", "third")) %}
+      <button
+        type="button"
+        class="results-slot"
+        data-position="{{ field }}"
+        data-prefill="{{ results_prefill[field] if results_prefill else '' }}"
+      >
+        <span class="results-slot__label">{{ label }}</span>
+        <span class="results-slot__value">&mdash;</span>
+      </button>
       {% endfor %}
-    </select>
-    {% endfor %}
-    <button class="btn btn--primary" type="submit">{{ results_verb }}</button>
+    </div>
+
+    <div class="results-entry__grid horse-grid">
+      {% set used = results_prefill.values() if results_prefill else [] %}
+      {% for horse in state.horses %}
+      <button
+        type="button"
+        class="horse-btn results-horse-btn{% if horse.scratched %} horse-btn--scratched{% elif horse.number in used %} horse-btn--used{% endif %}"
+        data-horse-number="{{ horse.number }}"
+        {% if horse.scratched %}
+        data-scratched disabled aria-disabled="true"
+        {% elif horse.number in used %}
+        disabled aria-disabled="true"
+        {% endif %}
+      >
+        <span class="horse-btn__number">{{ horse.number }}</span>
+      </button>
+      {% endfor %}
+    </div>
+
+    <button class="btn {{ results_button_class }} results-entry__publish" type="submit" disabled>
+      {{ results_verb }}
+    </button>
   </form>
 </section>

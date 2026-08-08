@@ -257,36 +257,164 @@ h1, h2 {
 }
 
 /* --- operator panel ---------------------------------------------------- */
-/* Deliberately minimal this pass — functional forms only. Full per-view
-   layout, the tap-to-select results grid, and the results/scratch visual
-   polish are Step 4b's template pass, not this one. */
 
 .page--operator {
   padding-bottom: 24px;
 }
 
-.operator-username {
-  display: block;
-  margin-top: 6px;
-  font-size: 2.5rem;
-  font-weight: 800;
+.state__subtitle {
+  color: var(--color-text-muted);
+  margin: 0 0 16px;
 }
 
-.scratch-list,
+/* One accent-filled dominant control per view — larger than every other
+   button on the page, so the operator can run the evening by looking for
+   the one big button. Stacks on top of .btn.btn--primary. */
+.operator-primary-btn {
+  display: block;
+  width: 100%;
+  min-height: 64px;
+  padding: 16px 28px;
+  font-size: 1.25rem;
+  margin-top: 12px;
+}
+
+/* Visible but muted — used for every subordinate/recovery action (Reopen,
+   Correct result, Add guest / Unlock / Fix a bet), vs. a bare .btn which
+   has no background/color of its own. */
+.btn--secondary {
+  background: var(--color-surface-alt);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+}
+
 .results-entry,
 .not-bet-list,
-.secondary-actions {
+.secondary-actions,
+.scratch-list,
+.scratch-list--collapsed {
   margin-top: 20px;
 }
 
-.scratch-list__row {
+/* --- results entry: tap-a-position, tap-a-horse ------------------------ */
+
+.results-entry__slots {
+  display: flex;
+  gap: 10px;
+  margin: 12px 0 16px;
+}
+
+.results-slot {
+  flex: 1;
+  min-height: 48px;
+  touch-action: manipulation;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border-radius: 10px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+  padding: 8px 4px;
+}
+
+.results-slot__label {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.results-slot__value {
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.results-slot--active {
+  border-color: var(--color-accent);
+}
+
+.results-slot--filled {
+  background: var(--color-surface-alt);
+}
+
+.results-entry__grid {
+  margin-top: 12px;
+}
+
+/* A horse already assigned to a position — distinct from
+   .horse-btn--scratched (never running) so the operator can tell "already
+   used" from "not running" at a glance. */
+.horse-btn--used {
+  background: var(--color-surface-alt);
+  color: var(--color-text-muted);
+  border-color: var(--color-border);
+  opacity: 0.6;
+}
+
+.results-entry__publish {
+  margin-top: 16px;
+}
+
+.results-entry__publish:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* --- open view: bet count + who-hasn't-bet chips ------------------------ */
+
+.bet-count {
+  font-size: 2.5rem;
+  font-weight: 800;
+  margin: 0 0 12px;
+}
+
+.bet-count__of {
+  font-size: 1.1rem;
+  font-weight: 500;
+  color: var(--color-text-muted);
+}
+
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  background: var(--color-surface-alt);
+  color: var(--color-text-muted);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.85rem;
+}
+
+.scratch-list--collapsed summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.scratch-warning {
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  margin: 6px 0 12px;
+}
+
+/* --- scratches ----------------------------------------------------------- */
+
+.scratch-item {
   display: inline-block;
   margin: 0 6px 6px 0;
 }
 
-.scratch-toggle {
+.scratch-item__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   min-height: 44px;
-  padding: 8px 12px;
+  padding: 6px 12px;
   border-radius: 8px;
   border: 1px solid var(--color-border);
   background: var(--color-surface);
@@ -294,11 +422,56 @@ h1, h2 {
   cursor: pointer;
 }
 
-.scratch-toggle--scratched {
+.scratch-item--scratched .scratch-item__label {
   background: var(--color-scratched);
   color: var(--color-text-muted);
   border-color: var(--color-scratched);
 }
+
+.scratch-item__checkbox {
+  width: 18px;
+  height: 18px;
+}
+
+/* --- add-guest result: unmissable, own block, not a flash line --------- */
+
+.added-guest-callout {
+  margin: 16px 0 24px;
+  padding: 24px;
+  border-radius: 12px;
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  text-align: center;
+}
+
+.added-guest-callout__label {
+  margin: 0 0 4px;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.8;
+}
+
+.added-guest-callout__value {
+  margin: 0;
+  font-size: 3.5rem;
+  font-weight: 800;
+  word-break: break-all;
+}
+
+/* --- confirm page --------------------------------------------------------- */
+
+.confirm-page {
+  min-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  gap: 16px;
+}
+
+/* --- secondary actions: add guest / unlock / fix a bet ------------------ */
 
 .secondary-actions details {
   margin-bottom: 10px;
@@ -320,8 +493,39 @@ h1, h2 {
   margin-top: 10px;
 }
 
+.fixbet-horse-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.fixbet-horse-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  touch-action: manipulation;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.fixbet-horse-option--scratched {
+  background: var(--color-scratched);
+  color: var(--color-text-muted);
+  border-color: var(--color-scratched);
+}
+
 .operator-footer {
   margin-top: 32px;
   color: var(--color-text-muted);
   font-size: 0.85rem;
+}
+
+.operator-footer--stale {
+  color: var(--color-danger);
+  font-weight: 700;
 }
