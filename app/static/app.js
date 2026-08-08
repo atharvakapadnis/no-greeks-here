@@ -100,10 +100,16 @@ function initResultsEntry() {
     });
 
     horseButtons.forEach(function (btn) {
-      if (btn.hasAttribute("data-scratched")) return; // never re-enabled
+      // Scratched and used are independent facts — a horse can be both
+      // (already placed in the result being corrected, but scratched
+      // since). horse-btn--scratched is server-rendered once and never
+      // changes here; only horse-btn--used and disabled are recomputed,
+      // and disabled stays true whenever EITHER is true so a scratched
+      // button is never re-enabled just because its slot got cleared.
       var number = parseInt(btn.dataset.horseNumber, 10);
+      var isScratched = btn.hasAttribute("data-scratched");
       var isUsed = !!usedHorses[number];
-      btn.disabled = isUsed;
+      btn.disabled = isScratched || isUsed;
       btn.classList.toggle("horse-btn--used", isUsed);
     });
 

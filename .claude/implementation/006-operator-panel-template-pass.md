@@ -104,10 +104,13 @@ Server-rendered disabled state carries real information, not just cosmetic
 JS hooks: a horse already in the placings (`results_prefill`, populated
 only on the settled/correction view) renders `disabled` with class
 `horse-btn--used`; a scratched horse renders `disabled data-scratched`
-with class `horse-btn--scratched`. The two are mutually exclusive and
-distinguishable purely in server output — no JS execution needed to assert
-it, which is what `test_results_entry_distinguishes_assigned_from_scratched_horse`
-checks. The Publish/Correct button carries `disabled` in the initial
+with class `horse-btn--scratched`. These are independent facts, not
+mutually exclusive — a horse can be both (see "Post-review fixes" below)
+— and distinguishable purely in server output — no JS execution needed to
+assert it, which is what
+`test_results_entry_distinguishes_assigned_from_scratched_horse` and
+`test_results_entry_horse_that_is_both_scratched_and_assigned_shows_both`
+check. The Publish/Correct button carries `disabled` in the initial
 markup unconditionally (even on the pre-filled correction view) — JS
 removes it once all three slots are filled, so a JS failure can never
 submit a partial result.
@@ -142,7 +145,7 @@ No new CSS custom properties — everything reuses the existing
 
 ## Test coverage
 
-342 tests passing total (312 from Steps 1–4b's python pass, +30 this
+342 tests passing total (312 from Steps 1–4b's python pass, +31 this
 session): new `tests/test_operator_templates.py` (the parametrized
 present/absent action-form table across all 5 views using an
 `html.parser`-based extractor, destructive-string absence, auto-lock
@@ -209,13 +212,59 @@ consecutive runs against the same `--db-path` both succeed; pointing
 
 ## Verification
 
-`venv\Scripts\Activate.ps1` then `pytest -q` — 342 passed. `app.js`
+`venv\Scripts\Activate.ps1` then `pytest -q` — 343 passed. `app.js`
 syntax-checked with `node --check`. Manually rendered the fixbet grid,
 scratch checkboxes, and datalist pickers via ad hoc `TestClient` scripts to
 confirm markup shape (no browser available in this environment, consistent
 with 4a/4b's notes — a real mobile/laptop-browser click-through, including
 the tap-grid JS interaction itself, is still owed once a browser is
 available; `scripts/operator_demo.py` is what that rehearsal will use).
+
+## Post-review fixes (same session)
+
+Two fixes from a review pass after the initial implementation, no new
+features:
+
+- **Scratched and used are independent facts, not mutually exclusive.**
+  `_results_entry.html` originally used `{% if horse.scratched %}{% elif
+  horse.number in used %}`, so a horse that was both (placed in the result
+  being corrected, but scratched since) rendered as only scratched.
+  Meanwhile `initResultsEntry()` seeds its JS state from the slots'
+  `data-prefill`, so the client would still treat that horse as assigned —
+  a real divergence between what the server rendered and what the client
+  believed, on the one screen where a wrong tap publishes wrong scores.
+  Fixed: `horse-btn--scratched` and `horse-btn--used` are now independent
+  classes (both may apply), `disabled` is set whenever either is true, and
+  `data-scratched` stays keyed only to `scratched`. `initResultsEntry()`'s
+  `render()` had the mirror bug (it early-returned on `data-scratched`
+  buttons entirely, so it could never toggle `horse-btn--used` on/off for
+  one) — fixed to recompute `disabled = isScratched || isUsed` and toggle
+  `horse-btn--used` unconditionally on every horse button, while never
+  touching the server-rendered `horse-btn--scratched` class. CSS gained a
+  third, explicit treatment for the combined state
+  (`.horse-btn--scratched.horse-btn--used`: scratched-grey background,
+  danger-colored border, plus the `--used` checkmark badge) so the
+  operator can tell "not running", "already used", and "both" apart at a
+  glance, not just the first two.
+  `test_results_entry_distinguishes_assigned_from_scratched_horse`'s "no
+  horse carries both classes" assertion was dropped (it's no longer true
+  by design) and replaced with
+  `test_results_entry_horse_that_is_both_scratched_and_assigned_shows_both`,
+  which constructs the combination via `db.set_horse_scratched` (no status
+  guard, unlike `races.set_scratched`) since it isn't reachable through any
+  legitimate route today — the template must still render it correctly if
+  it ever occurs.
+- **`results_prefill`'s dict contract made explicit.** It was being built
+  as an inline Jinja dict literal in `settled.html`'s `{% with %}` clause
+  (`{"first": state.result.first, ...}`), which worked but buried the
+  fact that `_results_entry.html` requires a `dict[str, int]` — not
+  `state.result` itself, a `scoring.RaceResult` dataclass, which supports
+  neither the `.values()` nor the `[field]` access the template uses.
+  Moved into `_panel_context` (Python, commented): defaults to `None` for
+  every view, overridden to the explicit three-key dict only in the
+  "settled" branch. `locked.html` and `settled.html` no longer set
+  `results_prefill` themselves; it's picked up from the render context
+  Jinja's `{% include %}` already propagates by default.
 
 ## Carry-forward notes for Step 5 / Step 6
 

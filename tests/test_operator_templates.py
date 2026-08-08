@@ -261,8 +261,32 @@ def test_results_entry_distinguishes_assigned_from_scratched_horse(client):
     assert "data-scratched" in scratched_trailing
     assert "disabled" in scratched_trailing
 
-    for class_attr, _ in buttons.values():
-        assert not ("horse-btn--used" in class_attr and "horse-btn--scratched" in class_attr)
+
+def test_results_entry_horse_that_is_both_scratched_and_assigned_shows_both(client):
+    """Scratched and used are independent facts, not mutually exclusive —
+    a horse placed in the result being corrected can also be scratched
+    since. races.set_scratched forbids scratching a SETTLED race's horse
+    through any legitimate transition, so this combination isn't reachable
+    via the app's own action routes today, but the template must still
+    render it correctly if it ever occurs (direct db recovery, or a future
+    change to the state machine) rather than silently collapsing to just
+    one fact — a wrong tap on a screen that hid one of the two facts would
+    publish wrong scores. Constructed here via db.set_horse_scratched,
+    which — unlike races.set_scratched — has no status guard."""
+    _login_operator(client)
+    now = _now()
+    races.open_race(1, now)
+    races.lock_race(1, now)
+    races.settle_race(1, 1, 2, 3, now)
+    db.set_horse_scratched(1, 1, True)  # horse 1 was the 1st-place finisher
+
+    html = client.get("/operator").text
+    class_attr, trailing = _horse_buttons(html)[1]
+
+    assert "horse-btn--used" in class_attr
+    assert "horse-btn--scratched" in class_attr
+    assert "disabled" in trailing
+    assert "data-scratched" in trailing
 
 
 @pytest.mark.parametrize("view", ["locked", "settled"])

@@ -1,7 +1,7 @@
 <h1 class="state__title">Race {{ state.race_number }} of {{ state.total_races }} — betting is closed.</h1>
 <p class="state__subtitle">Enter the result to publish.</p>
 
-{% with results_action="/operator/race/settle", results_verb="Publish result", results_prefill=None, results_button_class="btn--primary operator-primary-btn" %}
+{% with results_action="/operator/race/settle", results_verb="Publish result", results_button_class="btn--primary operator-primary-btn" %}
 {% include "operator/partials/_results_entry.html" %}
 {% endwith %}
 

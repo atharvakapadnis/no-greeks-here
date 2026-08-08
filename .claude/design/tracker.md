@@ -41,8 +41,8 @@ Status against `@.claude/design/design-doc.md`, updated after each session.
       chips, add-guest callout, mid-dot confirm page), a username-based
       guest picker for Fix-a-bet/Unlock (separate claimed-only vs.
       all-guests lists), and `tests/test_operator_templates.py`'s
-      parametrized per-view action-form presence/absence table. 30 new
-      tests — 342 total passing. `scripts/operator_demo.py` added for
+      parametrized per-view action-form presence/absence table. 31 new
+      tests — 343 total passing. `scripts/operator_demo.py` added for
       pre-event rehearsal. See
       `@.claude/implementation/006-operator-panel-template-pass.md`.
 - [ ] 5. SSE and client resilience in `static/app.js`.

@@ -343,14 +343,37 @@ h1, h2 {
   margin-top: 12px;
 }
 
-/* A horse already assigned to a position — distinct from
-   .horse-btn--scratched (never running) so the operator can tell "already
-   used" from "not running" at a glance. */
+/* Scratched and already-used are independent facts about a horse — both
+   may apply at once (placed in the result being corrected, scratched
+   since) — so they're independent classes, not a mutually-exclusive
+   if/elif, and get three visually distinct treatments: not running,
+   already used, and both. The operator must be able to tell which at a
+   glance before tapping. */
 .horse-btn--used {
   background: var(--color-surface-alt);
   color: var(--color-text-muted);
   border-color: var(--color-border);
   opacity: 0.6;
+}
+
+.horse-btn--used::after {
+  content: "\2713";
+  position: absolute;
+  top: 2px;
+  right: 6px;
+  font-size: 0.9rem;
+}
+
+/* Both scratched AND used: background stays the scratched grey — "can't
+   run" is the more operationally important fact — but the checkmark badge
+   from .horse-btn--used still shows, and the border turns danger-colored,
+   so this reads as neither plain scratched nor plain used. Declared
+   explicitly rather than relying on cascade order between the two single-
+   class rules above, which have equal specificity. */
+.horse-btn--scratched.horse-btn--used {
+  background: var(--color-scratched);
+  color: var(--color-text-muted);
+  border-color: var(--color-danger);
 }
 
 .results-entry__publish {

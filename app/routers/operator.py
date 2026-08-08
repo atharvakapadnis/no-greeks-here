@@ -225,6 +225,13 @@ def _panel_context(
         # the just-settled PREVIOUS race via _effective_state's gap
         # reconstruction.
         "fixbet_horses": state.horses,
+        # _results_entry.html's template contract for results_prefill is a
+        # dict of position -> horse number ("first"/"second"/"third" keys,
+        # since it does `results_prefill[field]` and `.values()`) — NOT a
+        # scoring.RaceResult, which is a dataclass and supports neither.
+        # None (no prefill) by default; only the "settled" view (the
+        # results-correction case) has anything to prefill from.
+        "results_prefill": None,
     }
     context.update(_flash_context(flash))
 
@@ -253,6 +260,14 @@ def _panel_context(
         )
         context["auto_lock_choices"] = AUTO_LOCK_CHOICES
         context["fixbet_horses"] = context["next_horses"]
+        # Explicit dict conversion (see the results_prefill comment above)
+        # — state.result is the scoring.RaceResult _reconstruct_settled_state
+        # built for the just-settled race being offered for correction.
+        context["results_prefill"] = {
+            "first": state.result.first,
+            "second": state.result.second,
+            "third": state.result.third,
+        }
 
     elif view == "complete":
         all_guests = db.get_guests()

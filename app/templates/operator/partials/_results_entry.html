@@ -23,15 +23,13 @@
     <div class="results-entry__grid horse-grid">
       {% set used = results_prefill.values() if results_prefill else [] %}
       {% for horse in state.horses %}
+      {% set is_used = horse.number in used %}
       <button
         type="button"
-        class="horse-btn results-horse-btn{% if horse.scratched %} horse-btn--scratched{% elif horse.number in used %} horse-btn--used{% endif %}"
+        class="horse-btn results-horse-btn{% if horse.scratched %} horse-btn--scratched{% endif %}{% if is_used %} horse-btn--used{% endif %}"
         data-horse-number="{{ horse.number }}"
-        {% if horse.scratched %}
-        data-scratched disabled aria-disabled="true"
-        {% elif horse.number in used %}
-        disabled aria-disabled="true"
-        {% endif %}
+        {% if horse.scratched %}data-scratched{% endif %}
+        {% if horse.scratched or is_used %}disabled aria-disabled="true"{% endif %}
       >
         <span class="horse-btn__number">{{ horse.number }}</span>
       </button>

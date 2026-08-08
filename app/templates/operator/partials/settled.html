@@ -18,6 +18,6 @@
 {% include "operator/partials/_scratch_list.html" %}
 {% endwith %}
 
-{% with results_action="/operator/race/correct", results_verb="Correct result", results_prefill={"first": state.result.first, "second": state.result.second, "third": state.result.third}, results_button_class="btn--secondary" %}
+{% with results_action="/operator/race/correct", results_verb="Correct result", results_button_class="btn--secondary" %}
 {% include "operator/partials/_results_entry.html" %}
 {% endwith %}
