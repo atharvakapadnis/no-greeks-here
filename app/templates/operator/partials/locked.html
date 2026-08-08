@@ -1,0 +1,10 @@
+<h1 class="state__title">Race {{ state.race_number }} — betting closed.</h1>
+
+{% with results_action="/operator/race/settle", results_verb="Publish result", results_prefill=None %}
+{% include "operator/partials/_results_entry.html" %}
+{% endwith %}
+
+<form method="post" action="/operator/race/reopen">
+  <input type="hidden" name="race_number" value="{{ state.race_number }}">
+  <button class="btn" type="submit">Reopen betting</button>
+</form>

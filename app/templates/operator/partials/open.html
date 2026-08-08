@@ -1,0 +1,21 @@
+<h1 class="state__title">Race {{ state.race_number }} — betting is open.</h1>
+<p class="state__body">{{ bet_count }} of {{ guest_count }} have bet.</p>
+{% if state.seconds_to_auto_lock is not none %}
+<p class="countdown">Auto-locks in {{ state.seconds_to_auto_lock }}s</p>
+{% endif %}
+
+{% if not_bet %}
+<section class="not-bet-list">
+  <h2>Haven't bet yet</h2>
+  <ul>
+    {% for g in not_bet %}
+    <li>{{ g.display_name }}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<form method="post" action="/operator/race/lock">
+  <input type="hidden" name="race_number" value="{{ state.race_number }}">
+  <button class="btn btn--primary" type="submit">Lock betting</button>
+</form>

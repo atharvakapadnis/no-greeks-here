@@ -25,8 +25,17 @@ Status against `@.claude/design/design-doc.md`, updated after each session.
       (`test_auth.py`, `test_guest_routes.py`) plus 11 naive-datetime guard
       tests at initial completion, plus 12 more in the fix-up pass — 242
       total passing.
-- [ ] 4b. Operator-facing routers and templates: race control panel
+- [~] 4b. Operator-facing routers and templates: race control panel
       (open/lock/settle/scratch), results entry, add guest, unlock device.
+      Python pass completed 2026-08-08: `app/routers/operator.py`,
+      operator auth/rate-limit/flash in `app/auth.py`, two new `db.py`
+      primitives, `scripts/import_guests.py`, functional (not yet
+      polished) templates under `app/templates/operator/`. 70 new tests
+      (`test_operator_auth.py`, `test_operator_routes.py`,
+      `test_import_guests.py`) — 312 total passing. Template pass
+      (per-view markup presence/absence assertions, the tap-to-select
+      results grid, visual polish) deliberately deferred to a later
+      session — see `@.claude/implementation/005-operator-panel.md`.
 - [ ] 5. SSE and client resilience in `static/app.js`.
 - [ ] 6. Docker, Litestream, Lightsail. Then rehearse a restore twice before the
       event.
@@ -106,6 +115,40 @@ Status against `@.claude/design/design-doc.md`, updated after each session.
   `RaceNotFoundError`, kept distinct from `BettingClosedError` because a
   locked race is a normal state and a nonexistent race is a bug/tampered
   request.
+- Step 4b's operator login rate limiter is a single global in-process
+  counter (`app/auth.py`'s `_operator_login_failures`), not per-IP as the
+  original brief specified. Behind Caddy at the venue every device shares
+  one NAT'd address, so a per-IP dict would in practice be one global
+  counter anyway — this makes that honest instead of pretending an
+  isolation that doesn't exist. It also never rejects a correct password:
+  past 5 failures, every subsequent WRONG password is answered after a
+  fixed 2s delay (`operator_login_delay_seconds()`) rather than being
+  locked out, so an operator mistyping their own password mid-event is
+  never blocked from their own event. A correct password always succeeds
+  immediately and resets the counter.
+- Operator action feedback (error messages, the generated username on
+  add-guest) travels via a one-shot signed cookie
+  (`ngh_operator_flash`, 30s max-age, read once by `GET /operator` and
+  always deleted on that response), not a `?error=...` query string. A
+  query string survives refresh/back-navigation, so the operator would see
+  stale results for actions that already succeeded; the cookie payload is
+  a message KEY (`operator.py`'s `FLASH_MESSAGES`), never free text, so
+  operator-facing copy stays in one place and nothing user-influenced is
+  ever rendered as HTML.
+- `POST /operator/race/settle` and `POST /operator/race/correct` are a
+  two-step, server-rendered confirm (a `confirmed` form field; the first
+  POST renders `operator/confirm.html` naming the placings without writing
+  anything, and its button re-POSTs with `confirmed=1`), not a client-side
+  `window.confirm()` — that API is unreliable on iOS Safari, and this is
+  the one confirm step in the app.
+- `POST /operator/race/correct` validates `race_number` against the MOST
+  RECENTLY settled race (`race_number == max(db.get_settled_results())`),
+  not against `races.current_state(now).race_number` like every other
+  action route. `correct_result`'s own fresh SETTLED-status check passes
+  for *any* settled race, forever — relying on that alone would let a
+  stale tab from two races ago silently rewrite an old result. `_effective_
+  state`'s reconstructed "settled" state must never be used for this
+  check either (see its docstring).
 
 ## Step 3's open questions, resolved in Step 4a
 
@@ -155,3 +198,14 @@ path only (idempotency dedup inside `place_bet`); the render path
   the venue network, so nothing on the guest's critical path should depend
   on an external host. Keep this rule for anything else Step 5 would
   otherwise reach for from a CDN.
+
+## Environment notes (not bugs)
+
+- Manual testing during Step 4a found `ConnectionResetError [WinError 10054]`
+  logged on iOS Safari connections, and `uvicorn`'s graceful shutdown
+  sometimes hanging on Ctrl-C. Both are Windows Proactor event-loop
+  artifacts (the asyncio event loop this dev machine defaults to), not
+  application errors — they don't indicate a request was mishandled or a
+  response was lost. Step 6's deployment verification should confirm
+  neither appears once the app runs on Linux (Docker/Lightsail), where the
+  event loop is selector-based, not Proactor-based.

@@ -1,0 +1,13 @@
+{% extends "operator/base.html" %}
+{% block title %}Operator login{% endblock %}
+{% block content %}
+<h1 class="login__title">Operator</h1>
+{% if error_message %}
+<p class="banner banner--error">{{ error_message }}</p>
+{% endif %}
+<form class="login__form" method="post" action="/operator/login">
+  <label class="login__label" for="password">Password</label>
+  <input class="login__input" type="password" id="password" name="password" autocomplete="current-password" required>
+  <button class="btn btn--primary" type="submit">Log in</button>
+</form>
+{% endblock %}

@@ -20,6 +20,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     SECRET_KEY: str
     DATABASE_PATH: str
+    OPERATOR_PASSWORD: str
     ENV: Literal["dev", "prod"] = "prod"
     COOKIE_SECURE: bool | None = None
 

@@ -16,6 +16,7 @@ def app_env(tmp_path, monkeypatch):
     db_path = tmp_path / "test.db"
     monkeypatch.setenv("DATABASE_PATH", str(db_path))
     monkeypatch.setenv("SECRET_KEY", "test-secret-key")
+    monkeypatch.setenv("OPERATOR_PASSWORD", "test-operator-password")
     monkeypatch.setenv("ENV", "dev")
     return db_path
 

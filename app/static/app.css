@@ -131,6 +131,10 @@ h1, h2 {
   font-size: 1.1rem;
   font-weight: 600;
   cursor: pointer;
+  /* Safari's double-tap-to-zoom otherwise intercepts the first tap on a
+     horse button, masking the hx-disabled-elt guard behind it. This also
+     removes Safari's ~300ms tap delay. */
+  touch-action: manipulation;
 }
 
 .horse-btn--selected {
@@ -250,4 +254,74 @@ h1, h2 {
 
 .tabbar__tab--active {
   color: var(--color-accent);
+}
+
+/* --- operator panel ---------------------------------------------------- */
+/* Deliberately minimal this pass — functional forms only. Full per-view
+   layout, the tap-to-select results grid, and the results/scratch visual
+   polish are Step 4b's template pass, not this one. */
+
+.page--operator {
+  padding-bottom: 24px;
+}
+
+.operator-username {
+  display: block;
+  margin-top: 6px;
+  font-size: 2.5rem;
+  font-weight: 800;
+}
+
+.scratch-list,
+.results-entry,
+.not-bet-list,
+.secondary-actions {
+  margin-top: 20px;
+}
+
+.scratch-list__row {
+  display: inline-block;
+  margin: 0 6px 6px 0;
+}
+
+.scratch-toggle {
+  min-height: 44px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.scratch-toggle--scratched {
+  background: var(--color-scratched);
+  color: var(--color-text-muted);
+  border-color: var(--color-scratched);
+}
+
+.secondary-actions details {
+  margin-bottom: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--color-surface);
+}
+
+.secondary-actions summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.secondary-actions form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.operator-footer {
+  margin-top: 32px;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
 }

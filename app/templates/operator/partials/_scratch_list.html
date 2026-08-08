@@ -1,0 +1,15 @@
+<section class="scratch-list">
+  <h2>Scratches{% if scratch_label %} {{ scratch_label }}{% endif %}</h2>
+  {% for horse in scratch_horses %}
+  <form method="post" action="/operator/race/scratch" class="scratch-list__row">
+    <input type="hidden" name="race_number" value="{{ scratch_race_number }}">
+    <input type="hidden" name="horse_number" value="{{ horse.number }}">
+    <input type="hidden" name="scratched" value="{{ 'false' if horse.scratched else 'true' }}">
+    <button
+      type="submit"
+      class="scratch-toggle{% if horse.scratched %} scratch-toggle--scratched{% endif %}"
+      aria-pressed="{{ 'true' if horse.scratched else 'false' }}"
+    >#{{ horse.number }}{% if horse.name %} {{ horse.name }}{% endif %}</button>
+  </form>
+  {% endfor %}
+</section>

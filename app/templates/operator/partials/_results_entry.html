@@ -1,0 +1,20 @@
+<section class="results-entry">
+  <h2>Results</h2>
+  <form method="post" action="{{ results_action }}">
+    <input type="hidden" name="race_number" value="{{ state.race_number }}">
+    {% for label, field in (("1st", "first"), ("2nd", "second"), ("3rd", "third")) %}
+    <label class="login__label" for="results-{{ field }}">{{ label }}</label>
+    <select class="login__input" id="results-{{ field }}" name="{{ field }}" required>
+      <option value="" disabled {% if not results_prefill %}selected{% endif %}>Choose a horse</option>
+      {% for horse in state.horses %}
+      <option
+        value="{{ horse.number }}"
+        {% if horse.scratched %}disabled{% endif %}
+        {% if results_prefill and results_prefill[field] == horse.number %}selected{% endif %}
+      >#{{ horse.number }}{% if horse.name %} {{ horse.name }}{% endif %}{% if horse.scratched %} (scratched){% endif %}</option>
+      {% endfor %}
+    </select>
+    {% endfor %}
+    <button class="btn btn--primary" type="submit">{{ results_verb }}</button>
+  </form>
+</section>

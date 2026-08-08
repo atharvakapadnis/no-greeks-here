@@ -1,0 +1,30 @@
+<section class="secondary-actions">
+  <details>
+    <summary>Add guest</summary>
+    <form method="post" action="/operator/guest/add">
+      <label class="login__label" for="add-guest-name">Name</label>
+      <input class="login__input" type="text" id="add-guest-name" name="display_name" required>
+      <button class="btn" type="submit">Add guest</button>
+    </form>
+  </details>
+
+  <details>
+    <summary>Unlock a device</summary>
+    <form method="post" action="/operator/guest/unlock">
+      <label class="login__label" for="unlock-guest-id">Guest ID</label>
+      <input class="login__input" type="number" id="unlock-guest-id" name="guest_id" required>
+      <button class="btn" type="submit">Unlock</button>
+    </form>
+  </details>
+
+  <details>
+    <summary>Fix a bet</summary>
+    <form method="post" action="/operator/bet/set">
+      <label class="login__label" for="fixbet-guest-id">Guest ID</label>
+      <input class="login__input" type="number" id="fixbet-guest-id" name="guest_id" required>
+      <label class="login__label" for="fixbet-horse-number">Horse number</label>
+      <input class="login__input" type="number" id="fixbet-horse-number" name="horse_number" required>
+      <button class="btn" type="submit">Set bet</button>
+    </form>
+  </details>
+</section>

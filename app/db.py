@@ -663,3 +663,27 @@ def set_guest_claimed_at(
     conn.execute(
         "UPDATE guest SET claimed_at = ? WHERE id = ?", (claimed_at, guest_id)
     )
+
+
+def clear_guest_device(
+    guest_id: int, *, conn: sqlite3.Connection | None = None
+) -> None:
+    """Unlocks a device: clears device_token only, never claimed_at — those
+    mean different things (participating vs. which phone claimed the
+    username). Powers the operator's Unlock-a-device action.
+    """
+    if conn is None:
+        with get_connection() as c:
+            clear_guest_device(guest_id, conn=c)
+            c.commit()
+            return
+    conn.execute("UPDATE guest SET device_token = NULL WHERE id = ?", (guest_id,))
+
+
+def fetch_guests() -> list[sqlite3.Row]:
+    """ALL guests, full rows — mirrors fetch_races(). Used for username-
+    collision checks on guest/add, where every existing username (claimed
+    or not) must be considered, not just logged-in guests.
+    """
+    with get_connection() as conn:
+        return conn.execute("SELECT * FROM guest ORDER BY id").fetchall()

@@ -1,0 +1,18 @@
+{% extends "operator/base.html" %}
+{% block title %}Operator panel{% endblock %}
+{% block content %}
+{% if flash_message %}
+<p class="banner {% if flash_key == 'guest_added' %}banner--settle{% else %}banner--error{% endif %}">
+  {{ flash_message }}
+  {% if flash_username %}<span class="operator-username">{{ flash_username }}</span>{% endif %}
+</p>
+{% endif %}
+
+{% include "operator/partials/" + view + ".html" %}
+
+{% include "operator/partials/_secondary_actions.html" %}
+
+<footer class="operator-footer">
+  <p>Backup: {{ backup_status }}</p>
+</footer>
+{% endblock %}

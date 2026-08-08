@@ -1,0 +1,18 @@
+<h1 class="state__title">All races settled.</h1>
+
+<table class="leaderboard__table">
+  <thead>
+    <tr><th>Rank</th><th>Guest</th><th>Points</th></tr>
+  </thead>
+  <tbody>
+    {% for row in board.rows %}
+    <tr class="leaderboard__row">
+      <td class="leaderboard__rank">{{ row.rank }}</td>
+      <td>{{ row.display_name }}</td>
+      <td>{{ row.total_points }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<p><a class="btn btn--primary" href="/operator/export">Export</a></p>

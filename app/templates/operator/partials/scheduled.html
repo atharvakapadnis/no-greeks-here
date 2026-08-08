@@ -1,0 +1,18 @@
+<h1 class="state__title">Race {{ state.race_number }} of {{ state.total_races }} hasn't started.</h1>
+
+<form method="post" action="/operator/race/open">
+  <input type="hidden" name="race_number" value="{{ state.race_number }}">
+  <label class="login__label" for="auto_lock_seconds">Auto-lock</label>
+  <select class="login__input" id="auto_lock_seconds" name="auto_lock_seconds">
+    {% for choice in auto_lock_choices %}
+    <option value="{{ choice if choice is not none else '' }}" {% if choice is none %}selected{% endif %}>
+      {{ (choice|string + "s") if choice is not none else "Manual lock only" }}
+    </option>
+    {% endfor %}
+  </select>
+  <button class="btn btn--primary" type="submit">Open betting</button>
+</form>
+
+{% with scratch_race_number=state.race_number, scratch_horses=state.horses, scratch_label=None %}
+{% include "operator/partials/_scratch_list.html" %}
+{% endwith %}
