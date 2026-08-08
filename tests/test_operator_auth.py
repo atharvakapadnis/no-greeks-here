@@ -38,20 +38,25 @@ def client(initialised_db):
 @pytest.fixture(autouse=True)
 def _reset_rate_limit():
     """The failure counter is module-global state — reset it around every
-    test in this file so tests never leak into each other regardless of
-    execution order.
+    test in this file (via the public reset path, not the private attribute
+    directly) so tests never leak into each other regardless of execution
+    order.
     """
-    auth._operator_login_failures = 0
+    auth.record_operator_login_success()
     yield
-    auth._operator_login_failures = 0
+    auth.record_operator_login_success()
 
 
 @pytest.fixture(autouse=True)
 def _no_real_sleep(monkeypatch):
     """Never actually sleep in tests: patch time.sleep where auth.py looks
     it up, so the 2s post-lockout delay doesn't cost real seconds per test.
+    Records each call's duration so tests can assert the delay path was (or
+    wasn't) actually exercised, not just infer it from the failure count.
     """
-    monkeypatch.setattr(auth.time, "sleep", lambda seconds: None)
+    calls: list[float] = []
+    monkeypatch.setattr(auth.time, "sleep", lambda seconds: calls.append(seconds))
+    return calls
 
 
 def _login_operator(client, password: str = "hunter2"):
@@ -165,15 +170,27 @@ def test_correct_password_always_succeeds_even_after_five_failures(client):
     assert response.headers["location"] == "/operator"
 
 
-def test_operator_rate_limit_is_global_not_per_client(client):
-    for _ in range(5):
-        client.post("/operator/login", data={"password": "wrong"})
+def test_rate_limit_is_global_not_per_ip(initialised_db, _no_real_sleep):
+    """A single module-level int, not a per-IP dict — documents the
+    deliberate choice not to pretend per-client isolation exists behind a
+    proxy that collapses every device to one address. Proven concretely,
+    not just via the internal counter: two independent TestClient sessions
+    (standing in for two different devices/IPs) share the same in-process
+    app, so client_a's five failures alone are enough to make client_b's
+    very next wrong attempt pay the 2s delay — evidenced by the actual
+    time.sleep(2) call, not merely the shared counter's value.
+    """
+    from app.main import app
 
-    # A single module-level int, not a per-IP dict — documents the
-    # deliberate choice not to pretend per-client isolation exists behind
-    # a proxy that collapses every device to one address.
-    assert isinstance(auth._operator_login_failures, int)
-    assert auth._operator_login_failures == 5
+    with TestClient(app) as client_a, TestClient(app) as client_b:
+        for _ in range(5):
+            client_a.post("/operator/login", data={"password": "wrong"})
+        assert _no_real_sleep == []  # no delay yet: each of the 5 checked before incrementing
+
+        response = client_b.post("/operator/login", data={"password": "wrong"})
+
+        assert response.status_code == 200
+        assert _no_real_sleep == [2]  # client_b alone never accumulated 5 failures
 
 
 def test_operator_login_success_resets_failure_count(client):

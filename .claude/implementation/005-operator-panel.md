@@ -211,6 +211,42 @@ separate manual run was needed beyond that. No browser available in this
 environment, consistent with 4a's note; a real mobile-browser click-through
 is still worth doing once the template pass lands.
 
+## Follow-up fixes (same session)
+
+Three small items, no new features:
+
+- Added `test_settle_confirm_page_rejected_if_race_moved_on_before_confirming`
+  and `test_correct_confirm_page_rejected_if_a_later_race_settles_first` —
+  the two-step confirm flow has a real window between rendering the confirm
+  page and the confirmed POST where another tab/operator can act. Both
+  tests render a confirm page, mutate the race state out of band (settle
+  race 1 directly for the settle case; settle a second race so
+  `max(settled)` moves for the correct case), then confirm and assert the
+  stale POST is rejected with `race_stale` and does not overwrite the
+  out-of-band result.
+- `test_operator_rate_limit_is_global_not_per_client` replaced with
+  `test_rate_limit_is_global_not_per_ip` in `tests/test_operator_auth.py`,
+  which now proves the cross-client effect concretely — two independent
+  `TestClient` sessions share the same in-process counter, so five
+  failures from one alone are enough to make the very next wrong attempt
+  from the *other* pay the 2s delay. `_no_real_sleep` now records call
+  durations instead of silently swallowing them, so this is evidenced by
+  an actual recorded `time.sleep(2)` call, not just the counter's value.
+- Both auth test files' rate-limit-reset fixtures now call
+  `auth.record_operator_login_success()` rather than assigning
+  `auth._operator_login_failures = 0` directly, so the reset goes through
+  the same public path production code uses.
+
+**Noted, not changed**: `_operator_login_failures` never resets except on
+a successful login — under the deployed single-worker process, a mistyped
+password late in a long evening can carry a nonzero-but-decayed-looking
+count from hours earlier, so a subsequent wrong attempt might pay the 2s
+delay even though the last *actual* failure was long past. This is
+intentional, not overlooked: the counter has no time dimension by design
+(simpler than a sliding window, and the cost of being wrong is 2 seconds),
+and the delay only ever applies to wrong passwords — a correct password is
+never affected by how old the failure streak is.
+
 ## Carry-forward notes for the template pass / Step 5
 
 - `operator/base.html` has no `<script>` tags at all currently — the

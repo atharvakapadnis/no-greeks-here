@@ -58,9 +58,9 @@ def client(initialised_db):
 
 @pytest.fixture(autouse=True)
 def _reset_rate_limit():
-    auth._operator_login_failures = 0
+    auth.record_operator_login_success()
     yield
-    auth._operator_login_failures = 0
+    auth.record_operator_login_success()
 
 
 def _login_operator(client) -> None:
@@ -283,6 +283,76 @@ def test_correct_result_rejects_race_that_is_not_most_recently_settled(client):
             "third": 1,
             "confirmed": "1",
         },
+        follow_redirects=True,
+    )
+
+    assert "board has moved on" in response.text.lower()
+    assert db.fetch_race(1)["first"] == 1  # unchanged
+
+
+def test_settle_confirm_page_rejected_if_race_moved_on_before_confirming(client):
+    """The confirm page is a two-step flow with a gap in between where
+    another tab/operator can act. Render the confirm page for race 1, then
+    settle race 1 out of band (as if a second tab got there first) so the
+    current race advances to race 2 — the original tab's confirmed=1 POST
+    must be rejected as stale, not silently re-apply (or worse, error out
+    trying to settle an already-SETTLED race).
+    """
+    _login_operator(client)
+    now = _now()
+    races.open_race(1, now)
+    races.lock_race(1, now)
+
+    confirm_response = client.post(
+        "/operator/race/settle",
+        data={"race_number": 1, "first": 1, "second": 2, "third": 3},
+    )
+    assert confirm_response.status_code == 200
+    assert "Confirm and publish" in confirm_response.text
+
+    # Out of band: race 1 gets settled through some other path before the
+    # original tab's confirm click arrives.
+    races.settle_race(1, 4, 5, 6, now)
+
+    response = client.post(
+        "/operator/race/settle",
+        data={"race_number": 1, "first": 1, "second": 2, "third": 3, "confirmed": "1"},
+        follow_redirects=True,
+    )
+
+    assert "board has moved on" in response.text.lower()
+    race1 = db.fetch_race(1)
+    assert race1["first"] == 4  # the out-of-band result, not the stale confirm's
+
+
+def test_correct_confirm_page_rejected_if_a_later_race_settles_first(client):
+    """Same gap, for correct: render the correct confirm page for race 1,
+    then settle race 2 out of band so max(settled) moves to 2 — the
+    original tab's confirmed=1 POST for race 1 must be rejected as stale,
+    not silently correct an old race after a newer one has already settled.
+    """
+    _login_operator(client)
+    now = _now()
+    races.open_race(1, now)
+    races.lock_race(1, now)
+    races.settle_race(1, 1, 2, 3, now)
+
+    confirm_response = client.post(
+        "/operator/race/correct",
+        data={"race_number": 1, "first": 3, "second": 2, "third": 1},
+    )
+    assert confirm_response.status_code == 200
+    assert "Confirm and correct" in confirm_response.text
+
+    # Out of band: race 2 settles before the original tab's confirm click
+    # arrives, moving max(settled) past race 1.
+    races.open_race(2, now)
+    races.lock_race(2, now)
+    races.settle_race(2, 4, 5, 6, now)
+
+    response = client.post(
+        "/operator/race/correct",
+        data={"race_number": 1, "first": 3, "second": 2, "third": 1, "confirmed": "1"},
         follow_redirects=True,
     )
 
